@@ -344,22 +344,48 @@ class JarvisAccessibilityService : AccessibilityService() {
 
     /**
      * Types a message into WhatsApp/Telegram and sends it.
+     * Retries clicking the send button up to 3 times with increasing delays
+     * because the send button may not appear immediately after typing.
      */
     fun sendMessage(message: String): Boolean {
         val (inputId, sendId) = when (currentPackage) {
             "com.whatsapp", "com.whatsapp.w4b" -> WA_INPUT_FIELD to WA_SEND_BUTTON
             "org.telegram.messenger" -> TG_INPUT_FIELD to TG_SEND_BUTTON
-            else -> return false
+            else -> {
+                Log.w(TAG, "sendMessage: unsupported app $currentPackage — trying generic approach")
+                // Try generic: type in any focused field and look for common send buttons
+                val typed = typeText(message)
+                if (!typed) return false
+                Thread.sleep(500)
+                // Try common send button texts
+                return clickNodeByText("Send") ||
+                        clickNodeByText("send") ||
+                        clickNodeByText("পাঠান") ||
+                        clickNodeByText("Отправить")
+            }
         }
 
         // Type the message
-        if (!typeText(message, inputId)) return false
+        if (!typeText(message, inputId)) {
+            Log.w(TAG, "sendMessage: failed to type into $inputId")
+            return false
+        }
 
-        // Small delay to let the UI update and show the send button
-        Thread.sleep(200)
+        // Retry clicking send with increasing delays (UI may need time to show button)
+        for (attempt in 1..3) {
+            val delayMs = (200L * attempt)
+            Thread.sleep(delayMs)
 
-        // Click send
-        return clickNodeById(sendId)
+            if (clickNodeById(sendId)) {
+                Log.d(TAG, "sendMessage: sent on attempt $attempt")
+                return true
+            }
+            Log.d(TAG, "sendMessage: send button not found, attempt $attempt")
+        }
+
+        // Last resort: try clicking by text "Send"
+        Thread.sleep(300)
+        return clickNodeByText("Send") || clickNodeByText("send")
     }
 
     /**
