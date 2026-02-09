@@ -120,7 +120,8 @@ class PreferenceManager(context: Context) {
             LlmProvider.GEMINI -> geminiApiKey
             LlmProvider.CLAUDE -> claudeApiKey
             LlmProvider.GROQ -> groqApiKey
-            LlmProvider.CUSTOM -> openAiApiKey  // Custom uses generic key
+            LlmProvider.FREEDOMGPT -> openAiApiKey  // FreedomGPT uses OpenAI-compatible key
+            LlmProvider.CUSTOM -> openAiApiKey       // Custom uses generic key
         }
     }
 
