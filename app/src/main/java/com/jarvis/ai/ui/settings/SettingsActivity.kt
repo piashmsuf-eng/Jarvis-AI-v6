@@ -43,6 +43,26 @@ class SettingsActivity : AppCompatActivity() {
     private val llmProviders = LlmProvider.entries.toTypedArray()
     private val ttsProviders = TtsProvider.entries.toTypedArray()
 
+    // Language codes → display names
+    private val languageCodes = arrayOf("bn-BD", "en-US", "en-IN", "hi-IN", "bn-IN", "ar-SA", "ur-PK")
+    private val languageNames = arrayOf(
+        "বাংলা (Bangla)",
+        "English (US)",
+        "English (India)",
+        "हिन्दी (Hindi)",
+        "বাংলা (India)",
+        "العربية (Arabic)",
+        "اردو (Urdu)"
+    )
+
+    // Voice sensitivity levels
+    private val sensitivityLabels = arrayOf(
+        "Low (quiet environment)",
+        "Normal",
+        "High (noisy environment)",
+        "Max Focus"
+    )
+
     /**
      * Tracks which permission the user was trying to enable before being
      * redirected to App Info to allow restricted settings.
@@ -67,6 +87,7 @@ class SettingsActivity : AppCompatActivity() {
 
         setupProviderSpinner()
         setupTtsSpinner()
+        setupLanguageSpinners()
         loadSavedSettings()
         setupPermissionButtons()
         setupSaveButton()
@@ -158,6 +179,23 @@ class SettingsActivity : AppCompatActivity() {
         binding.spinnerTts.adapter = adapter
     }
 
+    private fun setupLanguageSpinners() {
+        val langAdapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            languageNames
+        )
+        binding.spinnerSttLanguage.adapter = langAdapter
+        binding.spinnerTtsLanguage.adapter = langAdapter
+
+        val sensitivityAdapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            sensitivityLabels
+        )
+        binding.spinnerVoiceSensitivity.adapter = sensitivityAdapter
+    }
+
     private fun loadSavedSettings() {
         // Provider
         val providerIndex = llmProviders.indexOf(prefManager.selectedLlmProvider)
@@ -188,6 +226,18 @@ class SettingsActivity : AppCompatActivity() {
         // Wake Word
         binding.switchWakeWord.isChecked = prefManager.wakeWordEnabled
         binding.etPicovoiceKey.setText(prefManager.picovoiceAccessKey)
+
+        // Language & Voice
+        val sttIndex = languageCodes.indexOf(prefManager.sttLanguage)
+        if (sttIndex >= 0) binding.spinnerSttLanguage.setSelection(sttIndex)
+
+        val ttsLangIndex = languageCodes.indexOf(prefManager.ttsLanguage)
+        if (ttsLangIndex >= 0) binding.spinnerTtsLanguage.setSelection(ttsLangIndex)
+
+        val sensIndex = prefManager.voiceSensitivity.coerceIn(0, sensitivityLabels.size - 1)
+        binding.spinnerVoiceSensitivity.setSelection(sensIndex)
+
+        binding.etSystemPrompt.setText(prefManager.customSystemPrompt)
     }
 
     // ------------------------------------------------------------------ //
@@ -435,6 +485,12 @@ class SettingsActivity : AppCompatActivity() {
         val wakeWordWasEnabled = prefManager.wakeWordEnabled
         prefManager.wakeWordEnabled = binding.switchWakeWord.isChecked
         prefManager.picovoiceAccessKey = binding.etPicovoiceKey.text.toString().trim()
+
+        // Language & Voice
+        prefManager.sttLanguage = languageCodes[binding.spinnerSttLanguage.selectedItemPosition]
+        prefManager.ttsLanguage = languageCodes[binding.spinnerTtsLanguage.selectedItemPosition]
+        prefManager.voiceSensitivity = binding.spinnerVoiceSensitivity.selectedItemPosition
+        prefManager.customSystemPrompt = binding.etSystemPrompt.text.toString().trim()
 
         // Start/stop wake word service based on toggle
         if (binding.switchWakeWord.isChecked && prefManager.picovoiceAccessKey.isNotBlank()) {

@@ -114,6 +114,26 @@ class PreferenceManager(context: Context) {
         set(value) = prefs.edit().putBoolean(KEY_CARTESIA_WS, value).apply()
 
     // ------------------------------------------------------------------ //
+    //  Language & Voice Settings                                           //
+    // ------------------------------------------------------------------ //
+
+    var sttLanguage: String
+        get() = prefs.getString(KEY_STT_LANGUAGE, "bn-BD") ?: "bn-BD"
+        set(value) = prefs.edit().putString(KEY_STT_LANGUAGE, value).apply()
+
+    var ttsLanguage: String
+        get() = prefs.getString(KEY_TTS_LANGUAGE, "bn-BD") ?: "bn-BD"
+        set(value) = prefs.edit().putString(KEY_TTS_LANGUAGE, value).apply()
+
+    var customSystemPrompt: String
+        get() = prefs.getString(KEY_SYSTEM_PROMPT, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_SYSTEM_PROMPT, value).apply()
+
+    var voiceSensitivity: Int
+        get() = prefs.getInt(KEY_VOICE_SENSITIVITY, 2)
+        set(value) = prefs.edit().putInt(KEY_VOICE_SENSITIVITY, value).apply()
+
+    // ------------------------------------------------------------------ //
     //  Helper: Get API key for selected provider                          //
     // ------------------------------------------------------------------ //
 
@@ -155,5 +175,9 @@ class PreferenceManager(context: Context) {
         const val KEY_PICOVOICE = "api_key_picovoice"
         const val KEY_WAKE_WORD_ENABLED = "wake_word_enabled"
         const val KEY_CARTESIA_WS = "cartesia_use_websocket"
+        const val KEY_STT_LANGUAGE = "stt_language"
+        const val KEY_TTS_LANGUAGE = "tts_language"
+        const val KEY_SYSTEM_PROMPT = "custom_system_prompt"
+        const val KEY_VOICE_SENSITIVITY = "voice_sensitivity"
     }
 }

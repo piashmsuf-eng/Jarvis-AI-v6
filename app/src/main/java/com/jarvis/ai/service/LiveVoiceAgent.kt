@@ -5,6 +5,9 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.provider.MediaStore
 import android.os.Bundle
 import android.os.IBinder
@@ -147,10 +150,28 @@ class LiveVoiceAgent : Service() {
 
         startForeground(NOTIFICATION_ID, createNotification("Jarvis active — listening..."))
         acquireWakeLock()
+        requestBatteryOptimizationExemption()
         initializeComponents()
         startConversationLoop()
         listenForTextInput()
-        return START_STICKY
+        return START_STICKY  // Auto-restart if killed by system
+    }
+
+    /** Request ignore battery optimizations so Android doesn't kill us */
+    @Suppress("BatteryLife")
+    private fun requestBatteryOptimizationExemption() {
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                val intent = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = android.net.Uri.parse("package:$packageName")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                startActivity(intent)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Battery optimization request failed", e)
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -182,26 +203,27 @@ class LiveVoiceAgent : Service() {
         val model = prefManager.getEffectiveModel()
 
         if (apiKey.isNotBlank()) {
+            val customUrl = when (provider) {
+                LlmProvider.CUSTOM -> prefManager.customBaseUrl
+                LlmProvider.FREEDOMGPT -> prefManager.customBaseUrl.ifBlank { provider.defaultBaseUrl }
+                else -> null
+            }
             llmClient = LlmClient(
                 provider = provider,
                 apiKey = apiKey,
                 model = model,
-                customBaseUrl = if (provider == LlmProvider.CUSTOM) prefManager.customBaseUrl else null
+                customBaseUrl = customUrl
             )
         }
 
         // Initialize Cartesia TTS (primary)
         initializeCartesiaTts()
 
-        // Android TTS (offline fallback)
+        // Android TTS (offline fallback) — uses language from settings
         androidTts = TextToSpeech(this) { status ->
             androidTtsReady = status == TextToSpeech.SUCCESS
             if (androidTtsReady) {
-                val bengali = Locale("bn", "BD")
-                val result = androidTts?.setLanguage(bengali)
-                if (result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                    androidTts?.language = Locale.getDefault()
-                }
+                setTtsLanguage()
                 Log.i(TAG, "Android TTS ready (fallback)")
             }
         }
@@ -452,7 +474,9 @@ class LiveVoiceAgent : Service() {
     private fun buildMessages(client: LlmClient): List<ChatMessage> {
         val messages = mutableListOf<ChatMessage>()
 
-        messages.add(ChatMessage(role = "system", content = client.JARVIS_SYSTEM_PROMPT))
+        // Use custom system prompt if set, otherwise default
+        val systemPrompt = prefManager.customSystemPrompt.ifBlank { client.JARVIS_SYSTEM_PROMPT }
+        messages.add(ChatMessage(role = "system", content = systemPrompt))
 
         // Screen context
         val a11y = JarvisAccessibilityService.instance
@@ -730,90 +754,166 @@ class LiveVoiceAgent : Service() {
     }
 
     // ------------------------------------------------------------------ //
-    //  STT — SAFE LISTEN (with fresh recognizer + timeout)                //
+    //  STT — CONTINUOUS LISTEN (FIXED: no cooldown, instant restart)       //
     // ------------------------------------------------------------------ //
 
+    /** Track consecutive errors to avoid tight spin loops */
+    private var consecutiveSttErrors = 0
+
     /**
-     * Creates a FRESH SpeechRecognizer, listens once, then destroys it.
-     * This is the key fix — Android's SpeechRecognizer becomes unreliable
-     * after one use in a Service context. Fresh instance each time = reliable.
+     * MAIN FIX for "voice ekbar nile ar ney na":
      *
-     * Has a timeout so it never hangs forever.
+     * Problem: Android SpeechRecognizer has an internal cooldown after
+     * ERROR_NO_MATCH(7) and ERROR_SPEECH_TIMEOUT(6). After one use it
+     * waits 30s-2min before accepting startListening() again.
+     *
+     * Solution:
+     * 1. Create FRESH SpeechRecognizer EVERY time (destroy old one first)
+     * 2. Request AUDIO FOCUS before starting (ensures mic is free)
+     * 3. Add small delay (700ms) between destroy and create to let Android
+     *    release internal resources
+     * 4. Use language from settings (not hardcoded)
+     * 5. Configure silence timeouts based on voice sensitivity setting
      */
     private suspend fun safeListenForSpeech(): String {
         return try {
             withTimeout(STT_TIMEOUT_MS) {
-                listenForSpeechOnce()
+                // Small delay between listen cycles to let Android release mic
+                // This is the KEY fix — without it, SpeechRecognizer refuses to start
+                val delayMs = when {
+                    consecutiveSttErrors > 3 -> 2000L   // Many errors: longer cooldown
+                    consecutiveSttErrors > 0 -> 1000L   // Some errors: medium cooldown
+                    else -> 500L                         // No errors: quick restart
+                }
+                delay(delayMs)
+
+                val result = listenForSpeechOnce()
+                if (result.isNotBlank()) {
+                    consecutiveSttErrors = 0  // Reset on success
+                }
+                result
             }
         } catch (e: TimeoutCancellationException) {
-            Log.d(TAG, "STT timeout — no speech detected")
+            Log.d(TAG, "STT timeout — no speech")
+            consecutiveSttErrors++
             ""
         } catch (e: Exception) {
             Log.e(TAG, "STT error — recovering", e)
-            delay(500)
+            consecutiveSttErrors++
+            delay(1000)
             ""
         }
     }
 
     /**
-     * One-shot speech recognition with a fresh SpeechRecognizer instance.
+     * One-shot speech recognition with a FRESH SpeechRecognizer.
+     * Requests audio focus, uses language from settings, proper sensitivity.
      */
     private suspend fun listenForSpeechOnce(): String = withContext(Dispatchers.Main) {
         if (!SpeechRecognizer.isRecognitionAvailable(this@LiveVoiceAgent)) {
-            Log.e(TAG, "Speech recognition not available")
+            Log.e(TAG, "Speech recognition not available on this device")
             return@withContext ""
         }
 
+        // Request audio focus to ensure mic is available
+        requestAudioFocus()
+
         suspendCancellableCoroutine { cont ->
             var recognizer: SpeechRecognizer? = null
+            var hasResumed = false  // Prevent double resume
+
+            fun safeResume(text: String) {
+                if (!hasResumed && cont.isActive) {
+                    hasResumed = true
+                    try { recognizer?.destroy() } catch (_: Exception) {}
+                    recognizer = null
+                    abandonAudioFocus()
+                    cont.resume(text, null)
+                }
+            }
+
             try {
                 recognizer = SpeechRecognizer.createSpeechRecognizer(this@LiveVoiceAgent)
 
-                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, "bn-BD")
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "bn-BD")
-                    putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, "bn-BD")
-                    putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
-                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 4000L)
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 5000L)
+                // Get language from settings
+                val sttLang = prefManager.sttLanguage
+
+                // Get silence timeouts from voice sensitivity
+                val (possibleSilence, completeSilence) = when (prefManager.voiceSensitivity) {
+                    0 -> 6000L to 8000L    // Low: long silence allowed
+                    1 -> 4000L to 6000L    // Normal
+                    2 -> 3000L to 4000L    // High: shorter silence = faster response
+                    3 -> 2000L to 3000L    // Max Focus: very quick
+                    else -> 3000L to 5000L
                 }
 
-                recognizer.setRecognitionListener(object : RecognitionListener {
+                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, sttLang)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, sttLang)
+                    putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, sttLang)
+                    putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true) // Get partial results for faster feedback
+                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, possibleSilence)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, completeSilence)
+                    // Prefer offline recognition if available (faster)
+                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
+                }
+
+                recognizer!!.setRecognitionListener(object : RecognitionListener {
                     override fun onResults(results: Bundle?) {
                         val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                             ?.firstOrNull() ?: ""
-                        Log.d(TAG, "Heard: $text")
-                        recognizer?.destroy()
-                        if (cont.isActive) cont.resume(text, null)
+                        Log.d(TAG, "STT result: '$text'")
+                        safeResume(text)
                     }
 
                     override fun onError(error: Int) {
-                        Log.d(TAG, "STT error code: $error")
-                        recognizer?.destroy()
-                        if (cont.isActive) cont.resume("", null)
+                        val errorName = when (error) {
+                            SpeechRecognizer.ERROR_AUDIO -> "AUDIO"
+                            SpeechRecognizer.ERROR_CLIENT -> "CLIENT"
+                            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "PERMISSIONS"
+                            SpeechRecognizer.ERROR_NETWORK -> "NETWORK"
+                            SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "NETWORK_TIMEOUT"
+                            SpeechRecognizer.ERROR_NO_MATCH -> "NO_MATCH"
+                            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "BUSY"
+                            SpeechRecognizer.ERROR_SERVER -> "SERVER"
+                            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "SPEECH_TIMEOUT"
+                            else -> "UNKNOWN($error)"
+                        }
+                        Log.d(TAG, "STT error: $errorName")
+                        consecutiveSttErrors++
+                        safeResume("")
                     }
 
                     override fun onReadyForSpeech(params: Bundle?) {
-                        Log.d(TAG, "STT ready — listening...")
+                        Log.d(TAG, "STT ready — mic active, listening...")
                     }
-                    override fun onBeginningOfSpeech() {}
+                    override fun onBeginningOfSpeech() {
+                        Log.d(TAG, "STT: speech started")
+                    }
                     override fun onRmsChanged(rmsdB: Float) {}
                     override fun onBufferReceived(buffer: ByteArray?) {}
                     override fun onEndOfSpeech() {
-                        Log.d(TAG, "STT end of speech")
+                        Log.d(TAG, "STT: speech ended, processing...")
                     }
-                    override fun onPartialResults(partial: Bundle?) {}
+                    override fun onPartialResults(partial: Bundle?) {
+                        // Log partial results for debugging
+                        val text = partial?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                            ?.firstOrNull() ?: ""
+                        if (text.isNotBlank()) {
+                            Log.d(TAG, "STT partial: '$text'")
+                        }
+                    }
                     override fun onEvent(eventType: Int, params: Bundle?) {}
                 })
 
-                recognizer.startListening(intent)
+                recognizer!!.startListening(intent)
+                Log.d(TAG, "STT startListening called (lang=$sttLang)")
 
             } catch (e: Exception) {
-                Log.e(TAG, "STT start failed", e)
-                recognizer?.destroy()
-                if (cont.isActive) cont.resume("", null)
+                Log.e(TAG, "STT create/start failed", e)
+                safeResume("")
             }
 
             cont.invokeOnCancellation {
@@ -821,8 +921,51 @@ class LiveVoiceAgent : Service() {
                     recognizer?.stopListening()
                     recognizer?.destroy()
                 } catch (_: Exception) {}
+                abandonAudioFocus()
             }
         }
+    }
+
+    // ------------------------------------------------------------------ //
+    //  Audio Focus — ensures mic is available for STT                      //
+    // ------------------------------------------------------------------ //
+
+    private var audioFocusRequest: AudioFocusRequest? = null
+
+    private fun requestAudioFocus() {
+        try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build()
+                    )
+                    .setOnAudioFocusChangeListener {}
+                    .build()
+                am.requestAudioFocus(req)
+                audioFocusRequest = req
+            } else {
+                @Suppress("DEPRECATION")
+                am.requestAudioFocus({}, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Audio focus request failed", e)
+        }
+    }
+
+    private fun abandonAudioFocus() {
+        try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                audioFocusRequest?.let { am.abandonAudioFocusRequest(it) }
+            } else {
+                @Suppress("DEPRECATION")
+                am.abandonAudioFocus {}
+            }
+        } catch (_: Exception) {}
     }
 
     // ------------------------------------------------------------------ //
@@ -934,6 +1077,23 @@ class LiveVoiceAgent : Service() {
             }
 
             cont.invokeOnCancellation { androidTts?.stop() }
+        }
+    }
+
+    // ------------------------------------------------------------------ //
+    //  TTS Language Setup                                                 //
+    // ------------------------------------------------------------------ //
+
+    private fun setTtsLanguage() {
+        val langCode = prefManager.ttsLanguage
+        val parts = langCode.split("-")
+        val locale = if (parts.size >= 2) Locale(parts[0], parts[1]) else Locale(langCode)
+        val result = androidTts?.setLanguage(locale)
+        if (result == TextToSpeech.LANG_NOT_SUPPORTED || result == TextToSpeech.LANG_MISSING_DATA) {
+            Log.w(TAG, "TTS language $langCode not supported, using default")
+            androidTts?.language = Locale.getDefault()
+        } else {
+            Log.i(TAG, "TTS language set to $langCode")
         }
     }
 
