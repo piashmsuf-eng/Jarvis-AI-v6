@@ -207,6 +207,15 @@
             android:foregroundServiceType="microphone" />
 
         <!-- ====================================================== -->
+        <!--  SERVICE WATCHDOG (monitors and restarts services)      -->
+        <!--  Critical for RedMagic and other aggressive devices     -->
+        <!-- ====================================================== -->
+        <service
+            android:name=".service.ServiceWatchdog"
+            android:exported="false"
+            android:foregroundServiceType="specialUse" />
+
+        <!-- ====================================================== -->
         <!--  BOOT RECEIVER (auto-start wake word on device boot)    -->
         <!-- ====================================================== -->
         <receiver

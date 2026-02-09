@@ -8,23 +8,35 @@ import com.jarvis.ai.util.PreferenceManager
 import com.jarvis.ai.voice.WakeWordService
 
 /**
- * BootReceiver — Restarts the wake word service when the device boots.
- *
- * Only starts the service if:
- *   1. A Picovoice access key is configured
- *   2. Wake word was enabled before the reboot
+ * BootReceiver — Auto-starts services on device boot.
+ * 
+ * Starts:
+ * 1. ServiceWatchdog (always, to monitor accessibility)
+ * 2. WakeWordService (if user enabled it)
+ * 
+ * This is especially important for RedMagic and other devices
+ * that aggressively kill background services.
  */
 class BootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent?.action != Intent.ACTION_BOOT_COMPLETED) return
 
-        Log.i("BootReceiver", "Device boot completed — checking wake word config")
+        Log.i("BootReceiver", "Device boot completed — starting Jarvis services")
 
-        val prefManager = PreferenceManager(context)
-        if (prefManager.wakeWordEnabled && prefManager.picovoiceAccessKey.isNotBlank()) {
-            Log.i("BootReceiver", "Starting wake word service after boot")
-            WakeWordService.start(context)
+        try {
+            // Always start the watchdog to monitor services
+            ServiceWatchdog.start(context)
+            Log.i("BootReceiver", "ServiceWatchdog started")
+            
+            // Start wake word service if user had it enabled
+            val prefManager = PreferenceManager(context)
+            if (prefManager.wakeWordEnabled && prefManager.picovoiceAccessKey.isNotBlank()) {
+                Log.i("BootReceiver", "Starting wake word service after boot")
+                WakeWordService.start(context)
+            }
+        } catch (e: Exception) {
+            Log.e("BootReceiver", "Failed to start services on boot", e)
         }
     }
 }

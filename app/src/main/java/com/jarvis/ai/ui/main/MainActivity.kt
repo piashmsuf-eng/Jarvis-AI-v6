@@ -11,12 +11,14 @@ import android.graphics.Color
 import android.graphics.PorterDuff
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.View
 import android.view.animation.Animation
 import android.view.animation.AnimationUtils
 import android.view.inputmethod.EditorInfo
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -29,6 +31,7 @@ import com.jarvis.ai.service.LiveVoiceAgent
 import com.jarvis.ai.service.LiveVoiceAgent.Companion.AgentState
 import com.jarvis.ai.ui.settings.SettingsActivity
 import com.jarvis.ai.util.PreferenceManager
+import com.jarvis.ai.util.DeviceCompatibility
 import com.jarvis.ai.voice.WakeWordService
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -111,6 +114,18 @@ class MainActivity : AppCompatActivity() {
         // Fade-in entrance
         binding.root.alpha = 0f
         binding.root.animate().alpha(1f).setDuration(600).start()
+        
+        // Start the service watchdog to monitor accessibility
+        try {
+            com.jarvis.ai.service.ServiceWatchdog.start(this)
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Failed to start watchdog", e)
+        }
+        
+        // Check for device-specific issues and show troubleshooting if needed
+        if (intent?.getBooleanExtra("show_troubleshooting", false) == true) {
+            showDeviceCompatibilityDialog()
+        }
 
         // Handle launch intent (e.g., from wake word or overlay)
         handleIncomingIntent(intent)
@@ -455,5 +470,45 @@ class MainActivity : AppCompatActivity() {
                 appendLog("SYSTEM", "Audio permission denied - voice kaj korbe na.")
             }
         }
+    }
+    
+    // ------------------------------------------------------------------ //
+    //  Device Compatibility Dialog                                       //
+    // ------------------------------------------------------------------ //
+    
+    /**
+     * Show device-specific troubleshooting for accessibility issues.
+     * Especially important for RedMagic devices.
+     */
+    private fun showDeviceCompatibilityDialog() {
+        val instructions = DeviceCompatibility.getAccessibilityFixInstructions(this)
+        val adbCommands = DeviceCompatibility.getAdbCommands(this)
+        val permissionStatus = DeviceCompatibility.getPermissionStatus(this)
+        
+        val message = buildString {
+            appendLine(permissionStatus)
+            appendLine()
+            appendLine("═".repeat(40))
+            appendLine()
+            appendLine(instructions)
+            appendLine()
+            appendLine("═".repeat(40))
+            appendLine()
+            appendLine("🔧 ADB COMMANDS (For persistent issues):")
+            appendLine()
+            appendLine(adbCommands)
+        }
+        
+        AlertDialog.Builder(this)
+            .setTitle("🎮 Device Compatibility Guide")
+            .setMessage(message)
+            .setPositiveButton("Open Accessibility") { _, _ ->
+                DeviceCompatibility.openAccessibilitySettings(this)
+            }
+            .setNegativeButton("Open Notifications") { _, _ ->
+                DeviceCompatibility.openNotificationListenerSettings(this)
+            }
+            .setNeutralButton("Close", null)
+            .show()
     }
 }
