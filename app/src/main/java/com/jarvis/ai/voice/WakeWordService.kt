@@ -124,7 +124,11 @@ class WakeWordService : Service() {
                 1 -> 0.65f // Normal: balanced
                 2 -> 0.75f // High: more sensitive, easier to trigger  
                 3 -> 0.85f // Max: maximum sensitivity, may have false positives
-                else -> 0.65f  // Default to Normal level for consistency
+                else -> {
+                    // Default fallback (should not be reached if preferences are valid)
+                    Log.w(TAG, "Unexpected voiceSensitivity value: ${prefManager.voiceSensitivity}, using Normal")
+                    0.65f
+                }
             }
             
             porcupineManager = PorcupineManager.Builder()

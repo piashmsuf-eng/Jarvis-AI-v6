@@ -72,6 +72,7 @@ class LiveVoiceAgent : Service() {
         // Partial results display
         private const val MIN_PARTIAL_TEXT_LENGTH = 3    // Minimum chars to show partial result
         private const val MAX_PARTIAL_TEXT_DISPLAY_LENGTH = 30  // Max chars to display in notification
+        private const val NOTIFICATION_UPDATE_THROTTLE_MS = 300L  // Min delay between notification updates
 
         enum class AgentState {
             INACTIVE, GREETING, LISTENING, THINKING, SPEAKING, EXECUTING, PAUSED
@@ -908,6 +909,9 @@ class LiveVoiceAgent : Service() {
     
     /** Track if we're in a continuous listening session */
     private var isInActiveConversation = false
+    
+    /** Track last notification update time to throttle UI updates */
+    private var lastNotificationUpdateTime = 0L
 
     /**
      * MAIN FIX for "voice ekbar nile ar ney na":
@@ -963,6 +967,12 @@ class LiveVoiceAgent : Service() {
     private fun calculateAdaptiveDelay(): Long {
         // If we're in an active conversation (last success < 30s ago), use minimal delay
         val timeSinceLastSuccess = System.currentTimeMillis() - lastSuccessfulListenTime
+        
+        // Reset conversation state if window expired
+        if (timeSinceLastSuccess >= ACTIVE_CONVERSATION_WINDOW_MS) {
+            isInActiveConversation = false
+        }
+        
         if (isInActiveConversation && timeSinceLastSuccess < ACTIVE_CONVERSATION_WINDOW_MS) {
             return MIN_RESTART_DELAY_MS
         }
@@ -1080,13 +1090,18 @@ class LiveVoiceAgent : Service() {
                         Log.d(TAG, "STT: speech ended, processing...")
                     }
                     override fun onPartialResults(partial: Bundle?) {
-                        // Show partial results for immediate feedback
+                        // Show partial results for immediate feedback (throttled to prevent battery drain)
                         val text = partial?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                             ?.firstOrNull() ?: ""
                         if (text.isNotBlank() && text.length > MIN_PARTIAL_TEXT_LENGTH) {
                             Log.d(TAG, "STT partial: '$text'")
-                            // Update notification with partial result for user feedback
-                            updateNotification("Hearing: ${text.take(MAX_PARTIAL_TEXT_DISPLAY_LENGTH)}...")
+                            
+                            // Throttle notification updates to every 300ms
+                            val now = System.currentTimeMillis()
+                            if (now - lastNotificationUpdateTime > NOTIFICATION_UPDATE_THROTTLE_MS) {
+                                updateNotification("Hearing: ${text.take(MAX_PARTIAL_TEXT_DISPLAY_LENGTH)}...")
+                                lastNotificationUpdateTime = now
+                            }
                         }
                     }
                     override fun onEvent(eventType: Int, params: Bundle?) {}
