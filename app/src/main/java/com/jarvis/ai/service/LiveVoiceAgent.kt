@@ -65,6 +65,13 @@ class LiveVoiceAgent : Service() {
         private const val ACTION_TIMEOUT_MS = 10_000L    // Max 10s for an action
         private const val MIN_RESTART_DELAY_MS = 100L    // Minimum delay between listen cycles
         private const val MAX_RESTART_DELAY_MS = 2000L   // Maximum delay between listen cycles
+        
+        // Conversation tracking
+        private const val ACTIVE_CONVERSATION_WINDOW_MS = 30_000L  // 30s window for active conversation
+        
+        // Partial results display
+        private const val MIN_PARTIAL_TEXT_LENGTH = 3    // Minimum chars to show partial result
+        private const val MAX_PARTIAL_TEXT_DISPLAY_LENGTH = 30  // Max chars to display in notification
 
         enum class AgentState {
             INACTIVE, GREETING, LISTENING, THINKING, SPEAKING, EXECUTING, PAUSED
@@ -956,7 +963,7 @@ class LiveVoiceAgent : Service() {
     private fun calculateAdaptiveDelay(): Long {
         // If we're in an active conversation (last success < 30s ago), use minimal delay
         val timeSinceLastSuccess = System.currentTimeMillis() - lastSuccessfulListenTime
-        if (isInActiveConversation && timeSinceLastSuccess < 30_000) {
+        if (isInActiveConversation && timeSinceLastSuccess < ACTIVE_CONVERSATION_WINDOW_MS) {
             return MIN_RESTART_DELAY_MS
         }
         
@@ -1076,10 +1083,10 @@ class LiveVoiceAgent : Service() {
                         // Show partial results for immediate feedback
                         val text = partial?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                             ?.firstOrNull() ?: ""
-                        if (text.isNotBlank() && text.length > 3) {
+                        if (text.isNotBlank() && text.length > MIN_PARTIAL_TEXT_LENGTH) {
                             Log.d(TAG, "STT partial: '$text'")
                             // Update notification with partial result for user feedback
-                            updateNotification("Hearing: ${text.take(30)}...")
+                            updateNotification("Hearing: ${text.take(MAX_PARTIAL_TEXT_DISPLAY_LENGTH)}...")
                         }
                     }
                     override fun onEvent(eventType: Int, params: Bundle?) {}

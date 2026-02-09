@@ -124,7 +124,7 @@ class WakeWordService : Service() {
                 1 -> 0.65f // Normal: balanced
                 2 -> 0.75f // High: more sensitive, easier to trigger  
                 3 -> 0.85f // Max: maximum sensitivity, may have false positives
-                else -> 0.7f
+                else -> 0.65f  // Default to Normal level for consistency
             }
             
             porcupineManager = PorcupineManager.Builder()
