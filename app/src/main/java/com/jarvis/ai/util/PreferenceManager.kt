@@ -52,6 +52,10 @@ class PreferenceManager(context: Context) {
         get() = prefs.getString(KEY_GROQ, "") ?: ""
         set(value) = prefs.edit().putString(KEY_GROQ, value).apply()
 
+    var freedomGptApiKey: String
+        get() = prefs.getString(KEY_FREEDOMGPT, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_FREEDOMGPT, value).apply()
+
     var cartesiaApiKey: String
         get() = prefs.getString(KEY_CARTESIA, "") ?: ""
         set(value) = prefs.edit().putString(KEY_CARTESIA, value).apply()
@@ -120,7 +124,7 @@ class PreferenceManager(context: Context) {
             LlmProvider.GEMINI -> geminiApiKey
             LlmProvider.CLAUDE -> claudeApiKey
             LlmProvider.GROQ -> groqApiKey
-            LlmProvider.FREEDOMGPT -> openAiApiKey  // FreedomGPT uses OpenAI-compatible key
+            LlmProvider.FREEDOMGPT -> freedomGptApiKey
             LlmProvider.CUSTOM -> openAiApiKey       // Custom uses generic key
         }
     }
@@ -140,6 +144,7 @@ class PreferenceManager(context: Context) {
         const val KEY_GEMINI = "api_key_gemini"
         const val KEY_CLAUDE = "api_key_claude"
         const val KEY_GROQ = "api_key_groq"
+        const val KEY_FREEDOMGPT = "api_key_freedomgpt"
         const val KEY_CARTESIA = "api_key_cartesia"
         const val KEY_SPEECHIFY = "api_key_speechify"
         const val KEY_SELECTED_PROVIDER = "selected_llm_provider"
