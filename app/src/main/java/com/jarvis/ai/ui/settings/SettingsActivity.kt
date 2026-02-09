@@ -63,6 +63,15 @@ class SettingsActivity : AppCompatActivity() {
         "Max Focus"
     )
 
+    // Theme presets
+    private val themeLabels = arrayOf(
+        "Jarvis Cyan (#00E5FF)",
+        "Iron Man Red (#FF1744)",
+        "Hulk Green (#00E676)",
+        "Thanos Purple (#AA00FF)",
+        "Custom (enter hex below)"
+    )
+
     /**
      * Tracks which permission the user was trying to enable before being
      * redirected to App Info to allow restricted settings.
@@ -88,6 +97,7 @@ class SettingsActivity : AppCompatActivity() {
         setupProviderSpinner()
         setupTtsSpinner()
         setupLanguageSpinners()
+        setupThemeSpinner()
         loadSavedSettings()
         setupPermissionButtons()
         setupSaveButton()
@@ -179,6 +189,11 @@ class SettingsActivity : AppCompatActivity() {
         binding.spinnerTts.adapter = adapter
     }
 
+    private fun setupThemeSpinner() {
+        val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, themeLabels)
+        binding.spinnerTheme.adapter = adapter
+    }
+
     private fun setupLanguageSpinners() {
         val langAdapter = ArrayAdapter(
             this,
@@ -238,6 +253,10 @@ class SettingsActivity : AppCompatActivity() {
         binding.spinnerVoiceSensitivity.setSelection(sensIndex)
 
         binding.etSystemPrompt.setText(prefManager.customSystemPrompt)
+
+        // Theme
+        binding.spinnerTheme.setSelection(prefManager.themeIndex.coerceIn(0, themeLabels.size - 1))
+        binding.etCustomAccentColor.setText(prefManager.customAccentColor)
     }
 
     // ------------------------------------------------------------------ //
@@ -397,6 +416,16 @@ class SettingsActivity : AppCompatActivity() {
             appendLine("  - Ekhon enable korte parben!")
             appendLine()
             appendLine("IMPORTANT: Step 1 FIRST korte hobe! Na korle 3-dot menu te option dekhabe na.")
+            appendLine()
+            appendLine("═══ NUBIA / REDMAGIC PHONE: ═══")
+            appendLine("Settings > Apps > Jarvis AI > Permissions > ALL allow koren")
+            appendLine("Game Space OFF koren (Game Space block kore)")
+            appendLine("Battery > Unrestricted select koren")
+            appendLine()
+            appendLine("═══ ADB BYPASS (PC theke): ═══")
+            appendLine("adb shell appops set com.jarvis.ai ACCESS_RESTRICTED_SETTINGS allow")
+            appendLine("adb shell settings put secure enabled_accessibility_services com.jarvis.ai/.accessibility.JarvisAccessibilityService")
+            appendLine("adb shell settings put secure accessibility_enabled 1")
         }
 
         AlertDialog.Builder(this, com.google.android.material.R.style.ThemeOverlay_MaterialComponents_Dialog_Alert)
@@ -491,6 +520,13 @@ class SettingsActivity : AppCompatActivity() {
         prefManager.ttsLanguage = languageCodes[binding.spinnerTtsLanguage.selectedItemPosition]
         prefManager.voiceSensitivity = binding.spinnerVoiceSensitivity.selectedItemPosition
         prefManager.customSystemPrompt = binding.etSystemPrompt.text.toString().trim()
+
+        // Theme
+        prefManager.themeIndex = binding.spinnerTheme.selectedItemPosition
+        val customColor = binding.etCustomAccentColor.text.toString().trim()
+        if (customColor.startsWith("#") && customColor.length >= 7) {
+            prefManager.customAccentColor = customColor
+        }
 
         // Start/stop wake word service based on toggle
         if (binding.switchWakeWord.isChecked && prefManager.picovoiceAccessKey.isNotBlank()) {

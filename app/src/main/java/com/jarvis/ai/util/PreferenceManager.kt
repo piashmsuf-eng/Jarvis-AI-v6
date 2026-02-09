@@ -134,6 +134,20 @@ class PreferenceManager(context: Context) {
         set(value) = prefs.edit().putInt(KEY_VOICE_SENSITIVITY, value).apply()
 
     // ------------------------------------------------------------------ //
+    //  Theme Settings                                                      //
+    // ------------------------------------------------------------------ //
+
+    /** Theme index: 0=Jarvis Cyan, 1=Iron Man Red, 2=Hulk Green, 3=Thanos Purple, 4=Custom */
+    var themeIndex: Int
+        get() = prefs.getInt(KEY_THEME_INDEX, 0)
+        set(value) = prefs.edit().putInt(KEY_THEME_INDEX, value).apply()
+
+    /** Custom accent color hex (e.g., "#FF5722") */
+    var customAccentColor: String
+        get() = prefs.getString(KEY_CUSTOM_ACCENT, "#00E5FF") ?: "#00E5FF"
+        set(value) = prefs.edit().putString(KEY_CUSTOM_ACCENT, value).apply()
+
+    // ------------------------------------------------------------------ //
     //  Helper: Get API key for selected provider                          //
     // ------------------------------------------------------------------ //
 
@@ -179,5 +193,7 @@ class PreferenceManager(context: Context) {
         const val KEY_TTS_LANGUAGE = "tts_language"
         const val KEY_SYSTEM_PROMPT = "custom_system_prompt"
         const val KEY_VOICE_SENSITIVITY = "voice_sensitivity"
+        const val KEY_THEME_INDEX = "theme_index"
+        const val KEY_CUSTOM_ACCENT = "custom_accent_color"
     }
 }

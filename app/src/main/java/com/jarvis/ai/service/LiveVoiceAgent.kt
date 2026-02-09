@@ -283,8 +283,24 @@ class LiveVoiceAgent : Service() {
     }
 
     // ------------------------------------------------------------------ //
-    //  THE MAIN CONVERSATION LOOP — NEVER BREAKS                          //
+    //  THE MAIN CONVERSATION LOOP — INSTANT RESPONSE, NEVER BREAKS        //
+    //                                                                      //
+    //  Flow:                                                               //
+    //  1. Listen for speech                                                //
+    //  2. IMMEDIATELY say "OK Boss, shunchi" (instant, no LLM)            //
+    //  3. Call LLM in background                                           //
+    //  4. Speak LLM response                                               //
+    //  5. IMMEDIATELY go back to step 1 (no delay)                         //
     // ------------------------------------------------------------------ //
+
+    /** Acknowledgment phrases - randomly picked for natural feel */
+    private val ACK_PHRASES = listOf(
+        "OK Boss, shunchi",
+        "ji Boss",
+        "accha",
+        "hmm, bujhchi",
+        "thik ache Boss"
+    )
 
     private fun startConversationLoop() {
         keepListening = true
@@ -296,95 +312,100 @@ class LiveVoiceAgent : Service() {
             emitLog("JARVIS", greeting)
             safeSpeak(greeting)
 
-            // Step 2: Announce pending notifications
-            try { announceNewNotifications() } catch (e: Exception) {
-                Log.e(TAG, "Notification announce error", e)
-            }
-
-            // Step 3: CONTINUOUS LOOP — wrapped in try-catch, NEVER exits
+            // Step 2: CONTINUOUS LOOP
             while (keepListening) {
                 try {
+                    // ── LISTEN ──
                     _agentState.value = AgentState.LISTENING
                     updateNotification("Listening... Bolun Boss!")
 
-                    // Create fresh SpeechRecognizer each time (fixes Android re-use bug)
                     val userSpeech = safeListenForSpeech()
 
-                    if (userSpeech.isBlank()) {
-                        // No speech — loop immediately (no delay!)
-                        continue
-                    }
+                    if (userSpeech.isBlank()) continue // Immediately re-listen
 
+                    val startTime = System.currentTimeMillis()
                     emitLog("YOU", userSpeech)
+                    Log.i(TAG, ">>> User said: '$userSpeech'")
 
-                    // Shutdown check
+                    // ── SHUTDOWN CHECK ──
                     if (SHUTDOWN_KEYWORDS.any { userSpeech.lowercase().contains(it) }) {
-                        val goodbye = "ঠিক আছে Boss, বন্ধ হয়ে যাচ্ছি। আবার ডাকবেন!"
-                        emitLog("JARVIS", goodbye)
-                        safeSpeak(goodbye)
+                        safeSpeak("ঠিক আছে Boss, বন্ধ হচ্ছি।")
                         stopSelf()
                         return@launch
                     }
 
-                    // Instant greeting response (no LLM needed - zero latency)
-                    val greetingKeywords = listOf(
-                        "hello jarvis", "hi jarvis", "hey jarvis", "jarvis",
-                        "হ্যালো জার্ভিস", "হেই জার্ভিস", "জার্ভিস",
-                        "hello", "hi", "hey"
-                    )
-                    val isGreeting = greetingKeywords.any {
-                        userSpeech.lowercase().trim() == it ||
-                        userSpeech.lowercase().trim().startsWith("$it ")
-                    }
-                    if (isGreeting && userSpeech.length < 30) {
-                        val greetingResponse = "হ্যাঁ Boss, বলুন"
-                        emitLog("JARVIS", greetingResponse)
-                        _agentState.value = AgentState.SPEAKING
-                        safeSpeak(greetingResponse)
+                    // ── INSTANT GREETING (no LLM, ~0ms) ──
+                    val speech = userSpeech.lowercase().trim()
+                    if (speech.length < 25 && GREETING_KEYWORDS.any { speech == it || speech.startsWith("$it ") }) {
+                        emitLog("JARVIS", "হ্যাঁ Boss, বলুন!")
+                        safeSpeak("হ্যাঁ Boss, বলুন!")
                         continue
                     }
 
-                    // INSTANT ACKNOWLEDGMENT — so user knows Jarvis heard them
-                    // This speaks "hmm" while LLM processes in background
+                    // ── INSTANT ACK + PARALLEL LLM ──
                     _agentState.value = AgentState.THINKING
-                    updateNotification("Thinking...")
+                    updateNotification("Processing...")
 
-                    // Start LLM call in background immediately
-                    val llmDeferred = ioScope.async {
-                        try {
-                            askLlm(userSpeech)
-                        } catch (e: Exception) {
-                            Log.e(TAG, "LLM call failed", e)
-                            "Boss, problem hocchhe. Abar bolun."
+                    // 1) Say "OK Boss shunchi" IMMEDIATELY (fire-and-forget, no wait)
+                    val ack = ACK_PHRASES.random()
+                    speakFireAndForget(ack)
+                    emitLog("JARVIS", ack)
+
+                    // 2) Start LLM call RIGHT NOW (parallel with ack speaking)
+                    val response = try {
+                        withTimeout(15_000L) {
+                            withContext(Dispatchers.IO) {
+                                askLlm(userSpeech)
+                            }
                         }
+                    } catch (e: TimeoutCancellationException) {
+                        "Boss, response ashtey deri hochhe. Abar try kori?"
+                    } catch (e: Exception) {
+                        Log.e(TAG, "LLM error", e)
+                        "Boss, problem hoyeche. Abar bolun."
                     }
 
-                    // Speak quick acknowledgment WHILE LLM is processing
-                    // Only for longer queries (not simple ones)
-                    if (userSpeech.length > 15) {
-                        val ack = listOf("hmm", "accha", "bujhchi", "thik ache").random()
-                        // Don't wait for ack to finish — fire and forget
-                        androidTts?.speak(ack, TextToSpeech.QUEUE_FLUSH, null, "ack_${System.currentTimeMillis()}")
-                    }
+                    val elapsed = System.currentTimeMillis() - startTime
+                    Log.i(TAG, ">>> LLM responded in ${elapsed}ms")
 
-                    // Wait for LLM response
-                    val response = llmDeferred.await()
                     emitLog("JARVIS", response)
 
-                    // Speak the full response
+                    // 3) Speak the full response (waits until done)
                     _agentState.value = AgentState.SPEAKING
                     updateNotification("Speaking...")
                     safeSpeak(response)
 
+                    Log.i(TAG, ">>> Total turn: ${System.currentTimeMillis() - startTime}ms")
+
+                    // NO DELAY — immediately go back to listening
+
                 } catch (e: CancellationException) {
-                    throw e // Don't catch coroutine cancellation
+                    throw e
                 } catch (e: Exception) {
-                    // CRITICAL: Catch everything and keep the loop alive
-                    Log.e(TAG, "Loop iteration error — recovering", e)
-                    emitLog("SYSTEM", "Error recovered — listening again...")
-                    delay(1000)
+                    Log.e(TAG, "Loop error — recovering", e)
+                    delay(500)
                 }
             }
+        }
+    }
+
+    private val GREETING_KEYWORDS = listOf(
+        "hello jarvis", "hi jarvis", "hey jarvis", "jarvis",
+        "হ্যালো জার্ভিস", "হেই জার্ভিস", "জার্ভিস",
+        "hello", "hi", "hey"
+    )
+
+    /**
+     * Speaks text WITHOUT waiting for it to finish.
+     * Used for quick acknowledgments while LLM processes.
+     */
+    private fun speakFireAndForget(text: String) {
+        try {
+            if (androidTtsReady) {
+                androidTts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "ack_${System.currentTimeMillis()}")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Fire-and-forget speak failed", e)
         }
     }
 
@@ -442,8 +463,7 @@ class LiveVoiceAgent : Service() {
 
         return withContext(Dispatchers.IO) {
             try {
-                // Cap LLM wait to 15 seconds max
-                val result = withTimeout(15_000L) { client.chat(messages) }
+                val result = client.chat(messages)
                 result.fold(
                     onSuccess = { response ->
                         conversationHistory.add(ChatMessage(role = "assistant", content = response))
