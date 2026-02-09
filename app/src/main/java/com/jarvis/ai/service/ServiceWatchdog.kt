@@ -157,6 +157,17 @@ class ServiceWatchdog : Service() {
             Log.i(TAG, "Notification listener ENABLED")
         }
         
+        // Check and restore DND settings if auto-restore is enabled
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (com.jarvis.ai.util.DoNotDisturbManager.isAutoRestoreEnabled(this)) {
+                try {
+                    com.jarvis.ai.util.DoNotDisturbManager.restoreSavedMode(this)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to restore DND mode", e)
+                }
+            }
+        }
+        
         lastA11yStatus = a11yEnabled
         lastNotifStatus = notifEnabled
     }
