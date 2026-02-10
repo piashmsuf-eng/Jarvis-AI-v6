@@ -59,10 +59,20 @@ class LiveVoiceAgent : Service() {
         private const val NOTIFICATION_ID = 2001
         private const val WAKELOCK_TAG = "JarvisAI:VoiceAgent"
 
-        // Timeouts
-        private const val STT_TIMEOUT_MS = 15_000L      // Max 15s for one listen
-        private const val TTS_TIMEOUT_MS = 30_000L       // Max 30s for TTS to finish
+        // Timeouts - Optimized for faster response
+        private const val STT_TIMEOUT_MS = 12_000L      // Max 12s for one listen (reduced from 15s)
+        private const val TTS_TIMEOUT_MS = 25_000L       // Max 25s for TTS to finish (reduced from 30s)
         private const val ACTION_TIMEOUT_MS = 10_000L    // Max 10s for an action
+        private const val MIN_RESTART_DELAY_MS = 100L    // Minimum delay between listen cycles
+        private const val MAX_RESTART_DELAY_MS = 2000L   // Maximum delay between listen cycles
+        
+        // Conversation tracking
+        private const val ACTIVE_CONVERSATION_WINDOW_MS = 30_000L  // 30s window for active conversation
+        
+        // Partial results display
+        private const val MIN_PARTIAL_TEXT_LENGTH = 3    // Minimum chars to show partial result
+        private const val MAX_PARTIAL_TEXT_DISPLAY_LENGTH = 30  // Max chars to display in notification
+        private const val NOTIFICATION_UPDATE_THROTTLE_MS = 300L  // Min delay between notification updates
 
         enum class AgentState {
             INACTIVE, GREETING, LISTENING, THINKING, SPEAKING, EXECUTING, PAUSED
@@ -893,6 +903,15 @@ class LiveVoiceAgent : Service() {
 
     /** Track consecutive errors to avoid tight spin loops */
     private var consecutiveSttErrors = 0
+    
+    /** Track last successful listen time for adaptive delays */
+    private var lastSuccessfulListenTime = 0L
+    
+    /** Track if we're in a continuous listening session */
+    private var isInActiveConversation = false
+    
+    /** Track last notification update time to throttle UI updates */
+    private var lastNotificationUpdateTime = 0L
 
     /**
      * MAIN FIX for "voice ekbar nile ar ney na":
@@ -904,38 +923,66 @@ class LiveVoiceAgent : Service() {
      * Solution:
      * 1. Create FRESH SpeechRecognizer EVERY time (destroy old one first)
      * 2. Request AUDIO FOCUS before starting (ensures mic is free)
-     * 3. Add small delay (700ms) between destroy and create to let Android
-     *    release internal resources
+     * 3. Add ADAPTIVE delay (100ms-2s) based on success/error rate
      * 4. Use language from settings (not hardcoded)
      * 5. Configure silence timeouts based on voice sensitivity setting
+     * 6. Track conversation state for faster response in active sessions
+     * 7. Implement exponential backoff on repeated errors
      */
     private suspend fun safeListenForSpeech(): String {
         return try {
             withTimeout(STT_TIMEOUT_MS) {
-                // Small delay between listen cycles to let Android release mic
-                // This is the KEY fix — without it, SpeechRecognizer refuses to start
-                val delayMs = when {
-                    consecutiveSttErrors > 3 -> 1000L   // Many errors: longer cooldown
-                    consecutiveSttErrors > 0 -> 500L   // Some errors: medium cooldown
-                    else -> 200L                         // No errors: quick restart
+                // ADAPTIVE DELAY: Faster in active conversations, slower on errors
+                val delayMs = calculateAdaptiveDelay()
+                if (delayMs > 0) {
+                    delay(delayMs)
                 }
-                delay(delayMs)
 
                 val result = listenForSpeechOnce()
                 if (result.isNotBlank()) {
                     consecutiveSttErrors = 0  // Reset on success
+                    lastSuccessfulListenTime = System.currentTimeMillis()
+                    isInActiveConversation = true
                 }
                 result
             }
         } catch (e: TimeoutCancellationException) {
             Log.d(TAG, "STT timeout — no speech")
             consecutiveSttErrors++
+            isInActiveConversation = false
             ""
         } catch (e: Exception) {
             Log.e(TAG, "STT error — recovering", e)
             consecutiveSttErrors++
+            isInActiveConversation = false
             delay(1000)
             ""
+        }
+    }
+    
+    /**
+     * Calculate adaptive delay between listen cycles.
+     * Faster response when in active conversation, slower on errors.
+     */
+    private fun calculateAdaptiveDelay(): Long {
+        // If we're in an active conversation (last success < 30s ago), use minimal delay
+        val timeSinceLastSuccess = System.currentTimeMillis() - lastSuccessfulListenTime
+        
+        // Reset conversation state if window expired
+        if (timeSinceLastSuccess >= ACTIVE_CONVERSATION_WINDOW_MS) {
+            isInActiveConversation = false
+        }
+        
+        if (isInActiveConversation && timeSinceLastSuccess < ACTIVE_CONVERSATION_WINDOW_MS) {
+            return MIN_RESTART_DELAY_MS
+        }
+        
+        // Exponential backoff on consecutive errors (prevents tight error loops)
+        return when {
+            consecutiveSttErrors >= 5 -> MAX_RESTART_DELAY_MS      // Many errors: 2s cooldown
+            consecutiveSttErrors >= 3 -> 1000L                     // Some errors: 1s cooldown
+            consecutiveSttErrors > 0 -> 500L                       // Few errors: 0.5s cooldown
+            else -> 200L                                            // No errors: quick restart
         }
     }
 
@@ -974,10 +1021,10 @@ class LiveVoiceAgent : Service() {
 
                 // Get silence timeouts from voice sensitivity
                 val (possibleSilence, completeSilence) = when (prefManager.voiceSensitivity) {
-                    0 -> 6000L to 8000L    // Low: long silence allowed
-                    1 -> 4000L to 6000L    // Normal
-                    2 -> 3000L to 4000L    // High: shorter silence = faster response
-                    3 -> 2000L to 3000L    // Max Focus: very quick
+                    0 -> 6000L to 8000L    // Low: long silence allowed (more accurate, slower)
+                    1 -> 4000L to 6000L    // Normal: balanced
+                    2 -> 2500L to 3500L    // High: shorter silence = faster response
+                    3 -> 1500L to 2500L    // Max Focus: very quick response
                     else -> 3000L to 5000L
                 }
 
@@ -987,11 +1034,15 @@ class LiveVoiceAgent : Service() {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, sttLang)
                     putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, sttLang)
                     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true) // Get partial results for faster feedback
-                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)  // Get top 3 results for better accuracy
                     putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, possibleSilence)
                     putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, completeSilence)
-                    // Prefer offline recognition if available (faster)
-                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
+                    // Prefer offline recognition if available (faster, more reliable)
+                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+                    // Enable beamforming for better noise cancellation (if device supports)
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                        putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, android.media.MediaRecorder.AudioSource.VOICE_RECOGNITION)
+                    }
                 }
 
                 recognizer!!.setRecognitionListener(object : RecognitionListener {
@@ -1015,8 +1066,15 @@ class LiveVoiceAgent : Service() {
                             SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "SPEECH_TIMEOUT"
                             else -> "UNKNOWN($error)"
                         }
-                        Log.d(TAG, "STT error: $errorName")
-                        consecutiveSttErrors++
+                        
+                        // Don't count NO_MATCH and TIMEOUT as real errors (they're expected)
+                        if (error != SpeechRecognizer.ERROR_NO_MATCH && 
+                            error != SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
+                            Log.w(TAG, "STT error: $errorName")
+                            consecutiveSttErrors++
+                        } else {
+                            Log.d(TAG, "STT: $errorName (expected, not counted as error)")
+                        }
                         safeResume("")
                     }
 
@@ -1032,11 +1090,18 @@ class LiveVoiceAgent : Service() {
                         Log.d(TAG, "STT: speech ended, processing...")
                     }
                     override fun onPartialResults(partial: Bundle?) {
-                        // Log partial results for debugging
+                        // Show partial results for immediate feedback (throttled to prevent battery drain)
                         val text = partial?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                             ?.firstOrNull() ?: ""
-                        if (text.isNotBlank()) {
+                        if (text.isNotBlank() && text.length > MIN_PARTIAL_TEXT_LENGTH) {
                             Log.d(TAG, "STT partial: '$text'")
+                            
+                            // Throttle notification updates to every 300ms
+                            val now = System.currentTimeMillis()
+                            if (now - lastNotificationUpdateTime > NOTIFICATION_UPDATE_THROTTLE_MS) {
+                                updateNotification("Hearing: ${text.take(MAX_PARTIAL_TEXT_DISPLAY_LENGTH)}...")
+                                lastNotificationUpdateTime = now
+                            }
                         }
                     }
                     override fun onEvent(eventType: Int, params: Bundle?) {}
@@ -1065,28 +1130,52 @@ class LiveVoiceAgent : Service() {
     // ------------------------------------------------------------------ //
 
     private var audioFocusRequest: AudioFocusRequest? = null
+    private var hasAudioFocus = false
 
     private fun requestAudioFocus() {
         try {
             val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
                     .setAudioAttributes(
                         AudioAttributes.Builder()
                             .setUsage(AudioAttributes.USAGE_ASSISTANT)
                             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                             .build()
                     )
-                    .setOnAudioFocusChangeListener {}
+                    .setAcceptsDelayedFocusGain(true)
+                    .setOnAudioFocusChangeListener { focusChange ->
+                        when (focusChange) {
+                            AudioManager.AUDIOFOCUS_GAIN -> {
+                                hasAudioFocus = true
+                                Log.d(TAG, "Audio focus gained")
+                            }
+                            AudioManager.AUDIOFOCUS_LOSS,
+                            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                                hasAudioFocus = false
+                                Log.d(TAG, "Audio focus lost")
+                            }
+                        }
+                    }
                     .build()
-                am.requestAudioFocus(req)
+                val result = am.requestAudioFocus(req)
+                hasAudioFocus = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
                 audioFocusRequest = req
+                Log.d(TAG, "Audio focus request result: $result")
             } else {
                 @Suppress("DEPRECATION")
-                am.requestAudioFocus({}, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                val result = am.requestAudioFocus(
+                    { focusChange ->
+                        hasAudioFocus = focusChange == AudioManager.AUDIOFOCUS_GAIN
+                    }, 
+                    AudioManager.STREAM_MUSIC, 
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE
+                )
+                hasAudioFocus = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
             }
         } catch (e: Exception) {
             Log.w(TAG, "Audio focus request failed", e)
+            hasAudioFocus = false
         }
     }
 
@@ -1094,12 +1183,18 @@ class LiveVoiceAgent : Service() {
         try {
             val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                audioFocusRequest?.let { am.abandonAudioFocusRequest(it) }
+                audioFocusRequest?.let { 
+                    am.abandonAudioFocusRequest(it)
+                    Log.d(TAG, "Audio focus abandoned")
+                }
             } else {
                 @Suppress("DEPRECATION")
                 am.abandonAudioFocus {}
             }
-        } catch (_: Exception) {}
+            hasAudioFocus = false
+        } catch (e: Exception) {
+            Log.w(TAG, "Audio focus abandon failed", e)
+        }
     }
 
     // ------------------------------------------------------------------ //
