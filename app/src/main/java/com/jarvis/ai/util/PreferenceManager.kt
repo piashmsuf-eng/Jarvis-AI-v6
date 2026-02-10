@@ -157,6 +157,20 @@ class PreferenceManager(context: Context) {
         get() = prefs.getString(KEY_CUSTOM_ACCENT, "#00E5FF") ?: "#00E5FF"
         set(value) = prefs.edit().putString(KEY_CUSTOM_ACCENT, value).apply()
 
+    var developerModeEnabled: Boolean
+        get() = prefs.getBoolean(KEY_DEVELOPER_MODE, false)
+        set(value) = prefs.edit().putBoolean(KEY_DEVELOPER_MODE, value).apply()
+
+    /** Emotional voice preset index (0=Normal, 1=Sad, 2=Happy, 3=Romantic, 4=Angry, 5=Echo) */
+    var emotionalVoicePreset: Int
+        get() = prefs.getInt(KEY_EMOTIONAL_VOICE, 0)
+        set(value) = prefs.edit().putInt(KEY_EMOTIONAL_VOICE, value).apply()
+
+    /** Memory storage location ("internal" or "external") */
+    var memoryStorage: String
+        get() = prefs.getString(KEY_MEMORY_STORAGE, "internal") ?: "internal"
+        set(value) = prefs.edit().putString(KEY_MEMORY_STORAGE, value).apply()
+
     // ------------------------------------------------------------------ //
     //  Helper: Get API key for selected provider                          //
     // ------------------------------------------------------------------ //
@@ -207,5 +221,8 @@ class PreferenceManager(context: Context) {
         const val KEY_AUDIO_FEEDBACK = "audio_feedback_enabled"
         const val KEY_THEME_INDEX = "theme_index"
         const val KEY_CUSTOM_ACCENT = "custom_accent_color"
+        const val KEY_DEVELOPER_MODE = "developer_mode_enabled"
+        const val KEY_EMOTIONAL_VOICE = "emotional_voice_preset"
+        const val KEY_MEMORY_STORAGE = "memory_storage_mode"
     }
 }

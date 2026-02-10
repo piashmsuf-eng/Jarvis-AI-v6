@@ -1,14 +1,30 @@
 package com.jarvis.ai.service
 
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.PendingIntent
 import android.app.Service
+import android.bluetooth.BluetoothAdapter
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.hardware.camera2.CameraManager
+import android.location.Geocoder
+import android.location.LocationManager
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.media.MediaPlayer
+import android.media.MediaRecorder
+import android.net.Uri
+import android.net.wifi.WifiManager
+import android.os.Build
+import android.provider.AlarmClock
+import android.provider.CalendarContract
+import android.provider.ContactsContract
 import android.provider.MediaStore
+import android.provider.Settings
+import android.view.KeyEvent
 import android.os.Bundle
 import android.os.IBinder
 import android.os.PowerManager
@@ -18,7 +34,9 @@ import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.app.NotificationCompat
+import android.text.format.Formatter
 import com.jarvis.ai.JarvisApplication
 import com.jarvis.ai.accessibility.JarvisAccessibilityService
 import com.jarvis.ai.network.client.CartesiaTtsClient
@@ -39,6 +57,9 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONObject
+import java.io.File
+import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -66,6 +87,7 @@ class LiveVoiceAgent : Service() {
         private const val ACTION_TIMEOUT_MS = 10_000L    // Max 10s for an action
         private const val MIN_RESTART_DELAY_MS = 100L    // Minimum delay between listen cycles
         private const val MAX_RESTART_DELAY_MS = 2000L   // Maximum delay between listen cycles
+        const val EXTRA_SCHEDULED_TASK = "extra_scheduled_task"
         
         // Conversation tracking
         private const val ACTIVE_CONVERSATION_WINDOW_MS = 30_000L  // 30s window for active conversation
@@ -133,6 +155,13 @@ class LiveVoiceAgent : Service() {
     private var cartesiaClient: CartesiaTtsClient? = null
 
     private var wakeLock: PowerManager.WakeLock? = null
+    private var audioManager: AudioManager? = null
+    private var cameraManager: CameraManager? = null
+    private var wifiManager: WifiManager? = null
+    private var mediaRecorder: MediaRecorder? = null
+    private var isRecordingAudio = false
+    private var recorderFile: java.io.File? = null
+    private var phoneFinderPlayer: MediaPlayer? = null
 
     // Conversation history
     private val conversationHistory = mutableListOf<ChatMessage>()
@@ -166,6 +195,7 @@ class LiveVoiceAgent : Service() {
         initializeComponents()
         startConversationLoop()
         listenForTextInput()
+        intent?.getStringExtra(EXTRA_SCHEDULED_TASK)?.let { handleScheduledTask(it) }
         return START_STICKY  // Auto-restart if killed by system
     }
 
@@ -210,6 +240,9 @@ class LiveVoiceAgent : Service() {
 
     private fun initializeComponents() {
         memoryDb = JarvisMemoryDb.getInstance(this)
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        cameraManager = getSystemService(Context.CAMERA_SERVICE) as? CameraManager
+        wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
         // LLM client
         val provider = prefManager.selectedLlmProvider
         val apiKey = prefManager.getApiKeyForProvider(provider)
@@ -457,6 +490,26 @@ class LiveVoiceAgent : Service() {
         "j0" to "read_screen"
     )
 
+    private val WEATHER_CODES = mapOf(
+        0 to "Clear sky",
+        1 to "Mainly clear",
+        2 to "Partly cloudy",
+        3 to "Overcast",
+        45 to "Fog",
+        48 to "Depositing rime fog",
+        51 to "Light drizzle",
+        53 to "Moderate drizzle",
+        55 to "Dense drizzle",
+        61 to "Slight rain",
+        63 to "Moderate rain",
+        65 to "Heavy rain",
+        71 to "Slight snowfall",
+        73 to "Moderate snowfall",
+        75 to "Heavy snowfall",
+        95 to "Thunderstorm",
+        96 to "Thunderstorm with hail"
+    )
+
     /**
      * Check if battery is low and switch to saver mode.
      * In saver mode: longer STT cooldown, skip notifications, shorter LLM context
@@ -499,8 +552,8 @@ class LiveVoiceAgent : Service() {
                 sb.appendLine("[$time] ${msg.role.uppercase()}: ${msg.content}")
             }
             // Save to file
-            val dir = getExternalFilesDir(null)
-            val file = java.io.File(dir, "jarvis_export_${System.currentTimeMillis()}.txt")
+            val dir = getStorageDir("exports")
+            val file = File(dir, "jarvis_export_${System.currentTimeMillis()}.txt")
             withContext(Dispatchers.IO) { file.writeText(sb.toString()) }
             emitLog("JARVIS", "Exported to: ${file.absolutePath}")
             "Conversation exported: ${file.name}"
@@ -1013,6 +1066,397 @@ class LiveVoiceAgent : Service() {
                     emitLog("JARVIS", "Image concept: $prompt\nBoss, ekhon image generation feature ashche. Apni eita describe korechi.")
                 }
 
+                "music_control" -> {
+                    val command = action.get("command")?.asString ?: "play_pause"
+                    val keyCode = when (command.lowercase()) {
+                        "play", "pause", "play_pause" -> KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+                        "next" -> KeyEvent.KEYCODE_MEDIA_NEXT
+                        "previous", "prev" -> KeyEvent.KEYCODE_MEDIA_PREVIOUS
+                        "stop" -> KeyEvent.KEYCODE_MEDIA_STOP
+                        else -> KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+                    }
+                    sendMediaButton(keyCode)
+                    emitLog("JARVIS", "Music command: $command")
+                }
+
+                "set_volume" -> {
+                    val level = action.get("level")?.asInt
+                    val direction = action.get("direction")?.asString
+                    val am = audioManager
+                    if (am == null) {
+                        emitLog("JARVIS", "Audio manager unavailable")
+                    } else {
+                        if (level != null) {
+                            val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                            val clamped = level.coerceIn(0, max)
+                            am.setStreamVolume(AudioManager.STREAM_MUSIC, clamped, AudioManager.FLAG_PLAY_SOUND)
+                            emitLog("JARVIS", "Volume set to $clamped/$max")
+                        } else if (!direction.isNullOrBlank()) {
+                            val dir = when (direction.lowercase()) {
+                                "up" -> AudioManager.ADJUST_RAISE
+                                "down" -> AudioManager.ADJUST_LOWER
+                                "mute" -> AudioManager.ADJUST_MUTE
+                                "unmute" -> AudioManager.ADJUST_UNMUTE
+                                else -> AudioManager.ADJUST_SAME
+                            }
+                            am.adjustVolume(dir, AudioManager.FLAG_PLAY_SOUND)
+                            emitLog("JARVIS", "Volume ${direction.lowercase()} command")
+                        }
+                    }
+                }
+
+                "set_brightness" -> {
+                    val level = action.get("level")?.asInt ?: return@when
+                    if (Settings.System.canWrite(this@LiveVoiceAgent)) {
+                        val clamped = level.coerceIn(0, 255)
+                        Settings.System.putInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS, clamped)
+                        emitLog("JARVIS", "Brightness set to $clamped")
+                    } else {
+                        emitLog("SYSTEM", "Brightness permission lagbe. Settings e giye 'Modify system settings' allow koren.")
+                    }
+                }
+
+                "toggle_flashlight" -> {
+                    val enable = action.get("enable")?.asBoolean ?: true
+                    val success = toggleTorch(enable)
+                    emitLog("JARVIS", if (success) "Flashlight ${if (enable) "ON" else "OFF"}" else "Flashlight toggle failed")
+                }
+
+                "lock_screen" -> {
+                    if (performGlobalActionSafe(JarvisAccessibilityService.GLOBAL_ACTION_LOCK_SCREEN)) {
+                        emitLog("JARVIS", "Phone locked")
+                    } else {
+                        emitLog("JARVIS", "Lock korte parlam na. Accessibility on ache?" )
+                    }
+                }
+
+                "take_screenshot" -> {
+                    if (performGlobalActionSafe(JarvisAccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)) {
+                        emitLog("JARVIS", "Screenshot neowa holo")
+                    } else {
+                        emitLog("JARVIS", "Screenshot nite parlam na.")
+                    }
+                }
+
+                "set_alarm" -> {
+                    val hour = action.get("hour")?.asInt ?: return@when
+                    val minute = action.get("minute")?.asInt ?: 0
+                    val message = action.get("message")?.asString ?: "Jarvis alarm"
+                    try {
+                        val intent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            putExtra(AlarmClock.EXTRA_HOUR, hour)
+                            putExtra(AlarmClock.EXTRA_MINUTES, minute)
+                            putExtra(AlarmClock.EXTRA_MESSAGE, message)
+                            putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+                        }
+                        startActivity(intent)
+                        emitLog("JARVIS", "Alarm set for $hour:$minute")
+                    } catch (e: Exception) {
+                        emitLog("JARVIS", "Alarm set korte parlam na: ${e.message}")
+                    }
+                }
+
+                "set_timer" -> {
+                    val seconds = action.get("seconds")?.asInt ?: return@when
+                    val message = action.get("message")?.asString ?: "Jarvis timer"
+                    try {
+                        val intent = Intent(AlarmClock.ACTION_SET_TIMER).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            putExtra(AlarmClock.EXTRA_LENGTH, seconds)
+                            putExtra(AlarmClock.EXTRA_MESSAGE, message)
+                            putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+                        }
+                        startActivity(intent)
+                        emitLog("JARVIS", "Timer set for ${seconds}s")
+                    } catch (e: Exception) {
+                        emitLog("JARVIS", "Timer set korte parlam na: ${e.message}")
+                    }
+                }
+
+                "add_calendar" -> {
+                    val title = action.get("title")?.asString ?: "Jarvis Event"
+                    val timestamp = action.get("timestamp")?.asLong ?: System.currentTimeMillis() + 60 * 60 * 1000
+                    val durationMinutes = action.get("duration_minutes")?.asInt ?: 30
+                    try {
+                        val values = ContentValues().apply {
+                            put(CalendarContract.Events.DTSTART, timestamp)
+                            put(CalendarContract.Events.DTEND, timestamp + durationMinutes * 60 * 1000)
+                            put(CalendarContract.Events.TITLE, title)
+                            put(CalendarContract.Events.CALENDAR_ID, 1)
+                            put(CalendarContract.Events.EVENT_TIMEZONE, TimeZone.getDefault().id)
+                        }
+                        val uri = contentResolver.insert(CalendarContract.Events.CONTENT_URI, values)
+                        emitLog("JARVIS", if (uri != null) "Calendar event added" else "Calendar event failed")
+                    } catch (e: Exception) {
+                        emitLog("JARVIS", "Calendar add error: ${e.message}")
+                    }
+                }
+
+                "get_location" -> {
+                    val location = getLastKnownLocation()
+                    if (location != null) {
+                        val geocoder = Geocoder(this@LiveVoiceAgent, Locale.getDefault())
+                        val address = try {
+                            geocoder.getFromLocation(location.latitude, location.longitude, 1)?.firstOrNull()
+                        } catch (_: Exception) { null }
+                        val city = address?.locality ?: address?.subAdminArea ?: "Unknown"
+                        emitLog("JARVIS", "Location: $city (${location.latitude}, ${location.longitude})")
+                    } else emitLog("JARVIS", "Location unavailable")
+                }
+
+                "get_weather" -> {
+                    scope.launch(Dispatchers.IO) {
+                        val city = action.get("city")?.asString
+                        val loc = getLastKnownLocation()
+                        val latitude = action.get("lat")?.asDouble ?: loc?.latitude ?: 23.8103
+                        val longitude = action.get("lon")?.asDouble ?: loc?.longitude ?: 90.4125
+                        try {
+                            val url = URL("https://api.open-meteo.com/v1/forecast?latitude=$latitude&longitude=$longitude&current_weather=true")
+                            val json = url.openStream().bufferedReader().use { it.readText() }
+                            val weather = JSONObject(json).getJSONObject("current_weather")
+                            val temp = weather.getDouble("temperature")
+                            val wind = weather.getDouble("windspeed")
+                            val code = weather.optInt("weathercode", -1)
+                            val description = WEATHER_CODES[code] ?: "Weather status"
+                            withContext(Dispatchers.Main) {
+                                emitLog("JARVIS", "Weather ${city ?: ""}: ${temp}°C, $description, wind ${wind} km/h")
+                            }
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) { emitLog("JARVIS", "Weather fetch failed: ${e.message}") }
+                        }
+                    }
+                }
+
+                "add_contact" -> {
+                    val name = action.get("name")?.asString ?: ""
+                    val phone = action.get("phone")?.asString ?: ""
+                    if (name.isBlank() || phone.isBlank()) return@when
+                    try {
+                        val values = ContentValues().apply {
+                            put(ContactsContract.RawContacts.ACCOUNT_TYPE, null as String?)
+                            put(ContactsContract.RawContacts.ACCOUNT_NAME, null as String?)
+                        }
+                        val rawUri = contentResolver.insert(ContactsContract.RawContacts.CONTENT_URI, values)
+                        val rawId = rawUri?.lastPathSegment?.toLongOrNull()
+                        if (rawId != null) {
+                            val dataValues = ContentValues().apply {
+                                put(ContactsContract.Data.RAW_CONTACT_ID, rawId)
+                                put(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE)
+                                put(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, name)
+                            }
+                            contentResolver.insert(ContactsContract.Data.CONTENT_URI, dataValues)
+
+                            val phoneValues = ContentValues().apply {
+                                put(ContactsContract.Data.RAW_CONTACT_ID, rawId)
+                                put(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE)
+                                put(ContactsContract.CommonDataKinds.Phone.NUMBER, phone)
+                                put(ContactsContract.CommonDataKinds.Phone.TYPE, ContactsContract.CommonDataKinds.Phone.TYPE_MOBILE)
+                            }
+                            contentResolver.insert(ContactsContract.Data.CONTENT_URI, phoneValues)
+                            emitLog("JARVIS", "Contact added: $name - $phone")
+                        } else emitLog("JARVIS", "Contact add failed")
+                    } catch (e: Exception) {
+                        emitLog("JARVIS", "Contact add error: ${e.message}")
+                    }
+                }
+
+                "toggle_wifi" -> {
+                    val enable = action.get("enable")?.asBoolean
+                    val success = if (enable != null) {
+                        setWifiEnabled(enable)
+                    } else false
+                    if (success) {
+                        emitLog("JARVIS", "Wi-Fi ${if (enable == true) "ON" else "OFF"}")
+                    } else {
+                        try {
+                            val intent = Intent(Settings.Panel.ACTION_WIFI).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                            startActivity(intent)
+                            emitLog("JARVIS", "Wi-Fi panel khule dilam Boss")
+                        } catch (e: Exception) {
+                            emitLog("JARVIS", "Wi-Fi toggle korte parlam na")
+                        }
+                    }
+                }
+
+                "toggle_bluetooth" -> {
+                    val enable = action.get("enable")?.asBoolean
+                    val success = if (enable != null) setBluetoothEnabled(enable) else false
+                    if (success) {
+                        emitLog("JARVIS", "Bluetooth ${if (enable == true) "ON" else "OFF"}")
+                    } else {
+                        try {
+                            val intent = Intent(Settings.Panel.ACTION_BLUETOOTH).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                            startActivity(intent)
+                            emitLog("JARVIS", "Bluetooth panel khule dilam Boss")
+                        } catch (e: Exception) {
+                            emitLog("JARVIS", "Bluetooth toggle korte parlam na")
+                        }
+                    }
+                }
+
+                "toggle_night_mode" -> {
+                    val enable = action.get("enable")?.asBoolean ?: true
+                    val mode = if (enable) androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES else androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO
+                    androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(mode)
+                    emitLog("JARVIS", "Night mode ${if (enable) "ON" else "OFF"}")
+                }
+
+                "wifi_info" -> {
+                    val info = wifiManager?.connectionInfo
+                    if (info != null) {
+                        val ssid = info.ssid?.trim('"') ?: "Unknown"
+                        val ip = android.text.format.Formatter.formatIpAddress(info.ipAddress)
+                        val speed = info.linkSpeed
+                        emitLog("JARVIS", "Wi-Fi: SSID=$ssid, IP=$ip, Speed=$speed Mbps")
+                    } else emitLog("JARVIS", "Wi-Fi info unavailable")
+                }
+
+                "list_apps" -> {
+                    val pm = packageManager
+                    val apps = pm.getInstalledApplications(0)
+                        .sortedBy { it.loadLabel(pm).toString().lowercase() }
+                        .take(20)
+                        .joinToString("\n") { it.loadLabel(pm).toString() }
+                    emitLog("JARVIS", "Installed apps:\n$apps")
+                }
+
+                "kill_app" -> {
+                    if (!developerModeOrWarn()) return@when
+                    val packageName = action.get("package")?.asString ?: return@when
+                    try {
+                        Runtime.getRuntime().exec(arrayOf("sh", "-c", "am force-stop $packageName"))
+                        emitLog("JARVIS", "$packageName force-stop diyechi")
+                    } catch (e: Exception) {
+                        emitLog("JARVIS", "Force-stop failed: ${e.message}")
+                    }
+                }
+
+                "reboot_phone" -> {
+                    if (!developerModeOrWarn()) return@when
+                    try {
+                        Runtime.getRuntime().exec(arrayOf("su", "-c", "reboot"))
+                        emitLog("JARVIS", "Reboot command pathano holo")
+                    } catch (e: Exception) {
+                        emitLog("JARVIS", "Reboot korte root lagbe: ${e.message}")
+                    }
+                }
+
+                "record_audio" -> {
+                    val state = action.get("state")?.asString ?: "start"
+                    scope.launch {
+                        val result = if (state.equals("stop", true)) stopAudioRecording() else startAudioRecording()
+                        emitLog("JARVIS", "Recorder: $result")
+                        if (state.equals("stop", true)) safeSpeak("Recording saved") else speakFireAndForget("Recording cholche")
+                    }
+                }
+
+                "set_reminder" -> {
+                    val text = action.get("text")?.asString ?: return@when
+                    val minutes = action.get("minutes")?.asInt ?: 1
+                    val task = "Reminder: $text"
+                    scheduleAlarmTask(task, minutes * 60 * 1000L)
+                    emitLog("JARVIS", "Reminder schedule: $text in $minutes minutes")
+                }
+
+                "find_phone" -> {
+                    playPhoneFinderTone()
+                    scope.launch {
+                        emitLog("JARVIS", "Phone finder ON (30s)")
+                        delay(30_000)
+                        stopPhoneFinderTone()
+                    }
+                }
+
+                "speed_test" -> {
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            val start = System.currentTimeMillis()
+                            val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", "ping -c 1 8.8.8.8"))
+                            val exit = process.waitFor()
+                            val time = System.currentTimeMillis() - start
+                            val log = process.inputStream.bufferedReader().readText()
+                            withContext(Dispatchers.Main) {
+                                emitLog("JARVIS", if (exit == 0) "Ping ${time}ms\n$log" else "Ping failed")
+                            }
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) {
+                                emitLog("JARVIS", "Speed test failed: ${e.message}")
+                            }
+                        }
+                    }
+                }
+
+                "search_files" -> {
+                    val query = action.get("query")?.asString ?: return@when
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            val projection = arrayOf(MediaStore.Files.FileColumns.DISPLAY_NAME, MediaStore.Files.FileColumns.DATA)
+                            val cursor = contentResolver.query(
+                                MediaStore.Files.getContentUri("external"),
+                                projection,
+                                "${MediaStore.Files.FileColumns.DISPLAY_NAME} LIKE ?",
+                                arrayOf("%$query%"),
+                                MediaStore.Files.FileColumns.DATE_ADDED + " DESC"
+                            )
+                            val results = mutableListOf<String>()
+                            cursor?.use {
+                                var i = 0
+                                while (it.moveToNext() && i < 10) {
+                                    results.add(it.getString(0) + "\n" + it.getString(1))
+                                    i++
+                                }
+                            }
+                            withContext(Dispatchers.Main) {
+                                emitLog("JARVIS", if (results.isEmpty()) "File pailam na" else results.joinToString("\n\n"))
+                            }
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) {
+                                emitLog("JARVIS", "File search failed: ${e.message}")
+                            }
+                        }
+                    }
+                }
+
+                "clean_cache" -> {
+                    if (!developerModeOrWarn()) return@when
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            Runtime.getRuntime().exec(arrayOf("sh", "-c", "pm trim-caches 1000G")).waitFor()
+                            withContext(Dispatchers.Main) { emitLog("JARVIS", "Cache clean command pathano") }
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) { emitLog("JARVIS", "Cache clean failed: ${e.message}") }
+                        }
+                    }
+                }
+
+                "video_mode" -> {
+                    try {
+                        val intent = Intent(MediaStore.ACTION_VIDEO_CAPTURE).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                        startActivity(intent)
+                        emitLog("JARVIS", "Video recorder open")
+                    } catch (e: Exception) {
+                        emitLog("JARVIS", "Video mode fail: ${e.message}")
+                    }
+                }
+
+                "dev_shell" -> {
+                    if (!developerModeOrWarn()) return@when
+                    val command = action.get("command")?.asString ?: return@when
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", command))
+                            val output = process.inputStream.bufferedReader().readText()
+                            val error = process.errorStream.bufferedReader().readText()
+                            withContext(Dispatchers.Main) {
+                                emitLog("DEV", "$command\n${(output + error).take(2000)}")
+                            }
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) { emitLog("DEV", "Failed: ${e.message}") }
+                        }
+                    }
+                }
+
                 "run_shell" -> {
                     val command = action.get("command")?.asString ?: ""
                     if (command.isNotBlank()) {
@@ -1037,6 +1481,7 @@ class LiveVoiceAgent : Service() {
                 }
 
                 "run_root" -> {
+                    if (!developerModeOrWarn()) return@when
                     val command = action.get("command")?.asString ?: ""
                     if (command.isNotBlank()) {
                         try {
@@ -1091,6 +1536,7 @@ class LiveVoiceAgent : Service() {
                 }
 
                 "edit_file" -> {
+                    if (!developerModeOrWarn()) return@when
                     val path = action.get("path")?.asString ?: ""
                     val content = action.get("content")?.asString ?: ""
                     if (path.isNotBlank() && content.isNotBlank()) {
@@ -1146,15 +1592,8 @@ class LiveVoiceAgent : Service() {
                     val task = action.get("task")?.asString ?: ""
                     val delayMinutes = action.get("delay_minutes")?.asInt ?: 0
                     if (task.isNotBlank() && delayMinutes > 0) {
-                        scope.launch {
-                            emitLog("JARVIS", "Task scheduled: '$task' in $delayMinutes minutes")
-                            delay(delayMinutes * 60 * 1000L)
-                            emitLog("JARVIS", "Running scheduled task: $task")
-                            // Parse the task as if user said it
-                            val response = try { askLlm(task) } catch (_: Exception) { "Task failed." }
-                            emitLog("JARVIS", response)
-                            safeSpeak("Boss, scheduled task done: $response")
-                        }
+                        scheduleAlarmTask(task, delayMinutes * 60 * 1000L)
+                        emitLog("JARVIS", "Scheduled task '$task' in $delayMinutes min")
                     }
                 }
 
@@ -1559,6 +1998,7 @@ class LiveVoiceAgent : Service() {
 
         return suspendCancellableCoroutine { cont ->
             val utteranceId = "j_${System.currentTimeMillis()}"
+            applyEmotionalVoicePreset()
 
             androidTts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(id: String?) {}
@@ -1602,6 +2042,22 @@ class LiveVoiceAgent : Service() {
         }
     }
 
+    private fun applyEmotionalVoicePreset() {
+        val preset = prefManager.emotionalVoicePreset
+        val (pitch, rate) = when (preset) {
+            1 -> 0.9f to 0.8f   // Sad
+            2 -> 1.1f to 1.2f   // Happy
+            3 -> 0.95f to 0.9f  // Romantic
+            4 -> 1.2f to 1.0f   // Angry
+            5 -> 1.0f to 1.0f   // Echo handled by audio effect (not available) -> default
+            else -> 1.0f to 1.0f
+        }
+        try {
+            androidTts?.setPitch(pitch)
+            androidTts?.setSpeechRate(rate)
+        } catch (_: Exception) {}
+    }
+
     // ------------------------------------------------------------------ //
     //  HELPERS                                                            //
     // ------------------------------------------------------------------ //
@@ -1624,6 +2080,198 @@ class LiveVoiceAgent : Service() {
     private fun releaseWakeLock() {
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
+    }
+
+    private fun sendMediaButton(keyCode: Int) {
+        try {
+            val eventTime = System.currentTimeMillis()
+            val downEvent = KeyEvent(eventTime, eventTime, KeyEvent.ACTION_DOWN, keyCode, 0)
+            val upEvent = KeyEvent(eventTime, eventTime, KeyEvent.ACTION_UP, keyCode, 0)
+            audioManager?.dispatchMediaKeyEvent(downEvent)
+            audioManager?.dispatchMediaKeyEvent(upEvent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Media button failed", e)
+        }
+    }
+
+    private fun getStorageDir(name: String): File {
+        val base = if (prefManager.memoryStorage == "external") {
+            getExternalFilesDir(null)
+        } else {
+            filesDir
+        } ?: filesDir
+        val dir = File(base, name)
+        if (!dir.exists()) dir.mkdirs()
+        return dir
+    }
+
+    private fun developerModeOrWarn(): Boolean {
+        return if (prefManager.developerModeEnabled) {
+            true
+        } else {
+            emitLog("SYSTEM", "Developer mode off. Settings e enable koren.")
+            false
+        }
+    }
+
+    private fun toggleTorch(enable: Boolean): Boolean {
+        return try {
+            val camId = cameraManager?.cameraIdList?.firstOrNull { id ->
+                try {
+                    cameraManager?.getCameraCharacteristics(id)?.get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+                } catch (_: Exception) { false }
+            } ?: return false
+            cameraManager?.setTorchMode(camId, enable)
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Torch toggle failed", e)
+            false
+        }
+    }
+
+    private fun setWifiEnabled(enable: Boolean): Boolean {
+        return try {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                wifiManager?.isWifiEnabled = enable
+                true
+            } else {
+                val cmd = "svc wifi ${if (enable) "enable" else "disable"}"
+                val exit = Runtime.getRuntime().exec(arrayOf("su", "-c", cmd)).waitFor()
+                exit == 0
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Wifi toggle failed", e)
+            false
+        }
+    }
+
+    private fun setBluetoothEnabled(enable: Boolean): Boolean {
+        return try {
+            val adapter = BluetoothAdapter.getDefaultAdapter() ?: return false
+            if (enable) adapter.enable() else adapter.disable()
+        } catch (e: Exception) {
+            Log.e(TAG, "Bluetooth toggle failed", e)
+            false
+        }
+    }
+
+    private fun performGlobalActionSafe(action: Int): Boolean {
+        return try {
+            val service = JarvisAccessibilityService.instance
+            service?.performGlobalAction(action) == true
+        } catch (e: Exception) {
+            Log.e(TAG, "Global action failed", e)
+            false
+        }
+    }
+
+    private suspend fun startAudioRecording(): String {
+        if (isRecordingAudio) return recorderFile?.absolutePath ?: "Already recording"
+        return withContext(Dispatchers.IO) {
+            try {
+                val dir = getStorageDir("recordings")
+                val file = File(dir, "jarvis_record_${System.currentTimeMillis()}.m4a")
+                val recorder = MediaRecorder()
+                recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
+                recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                recorder.setAudioEncodingBitRate(128000)
+                recorder.setAudioSamplingRate(44100)
+                recorder.setOutputFile(file.absolutePath)
+                recorder.prepare()
+                recorder.start()
+                mediaRecorder = recorder
+                recorderFile = file
+                isRecordingAudio = true
+                file.absolutePath
+            } catch (e: Exception) {
+                Log.e(TAG, "Recording start failed", e)
+                "Recording failed: ${e.message}"
+            }
+        }
+    }
+
+    private suspend fun stopAudioRecording(): String {
+        return withContext(Dispatchers.IO) {
+            try {
+                mediaRecorder?.stop()
+                mediaRecorder?.reset()
+                mediaRecorder?.release()
+            } catch (_: Exception) {}
+            mediaRecorder = null
+            isRecordingAudio = false
+            recorderFile?.absolutePath ?: "No recording"
+        }
+    }
+
+    private fun playPhoneFinderTone() {
+        try {
+            if (phoneFinderPlayer == null) {
+                phoneFinderPlayer = MediaPlayer.create(this, android.provider.Settings.System.DEFAULT_ALARM_ALERT_URI)
+                phoneFinderPlayer?.isLooping = true
+            }
+            phoneFinderPlayer?.setVolume(1f, 1f)
+            phoneFinderPlayer?.start()
+        } catch (e: Exception) {
+            Log.e(TAG, "Phone finder failed", e)
+        }
+    }
+
+    private fun stopPhoneFinderTone() {
+        try {
+            phoneFinderPlayer?.stop()
+            phoneFinderPlayer?.release()
+        } catch (_: Exception) {}
+        phoneFinderPlayer = null
+    }
+
+    private fun getLastKnownLocation(): android.location.Location? {
+        return try {
+            val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
+            val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+            providers.mapNotNull { provider ->
+                try { lm.getLastKnownLocation(provider) } catch (_: SecurityException) { null }
+            }.maxByOrNull { it.time }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun scheduleAlarmTask(task: String, delayMillis: Long) {
+        try {
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+            val triggerAt = System.currentTimeMillis() + delayMillis
+            val intent = Intent(this, ScheduledTaskReceiver::class.java).apply {
+                putExtra(ScheduledTaskReceiver.EXTRA_TASK, task)
+            }
+            val requestCode = (task + triggerAt).hashCode()
+            val pendingIntent = PendingIntent.getBroadcast(
+                this,
+                requestCode,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
+            val timeText = SimpleDateFormat("MMM dd HH:mm", Locale.getDefault()).format(Date(triggerAt))
+            emitLog("JARVIS", "Scheduled task at $timeText: $task")
+        } catch (e: Exception) {
+            Log.e(TAG, "scheduleAlarmTask failed", e)
+            emitLog("JARVIS", "Schedule failed: ${e.message}")
+        }
+    }
+
+    fun handleScheduledTask(task: String) {
+        scope.launch {
+            emitLog("JARVIS", "Executing scheduled task: $task")
+            val response = try {
+                askLlm(task)
+            } catch (e: Exception) {
+                Log.e(TAG, "Scheduled task failed", e)
+                "Scheduled task failed: ${e.message}"
+            }
+            emitLog("JARVIS", response)
+            safeSpeak("Boss, scheduled task done. $response")
+        }
     }
 
     private fun createNotification(text: String): Notification {

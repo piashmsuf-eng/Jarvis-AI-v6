@@ -451,6 +451,50 @@
             android:layout_marginBottom="24dp"
             android:fontFamily="monospace" />
 
+        <!-- Developer Mode -->
+        <com.google.android.material.switchmaterial.SwitchMaterial
+            android:id="@+id/switchDeveloperMode"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Developer Mode (root + shell + system edit)"
+            android:textColor="#CCCCCC"
+            android:textSize="13sp"
+            android:layout_marginBottom="16dp" />
+
+        <!-- Emotional Voice -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Emotional Voice Mood"
+            android:textColor="#CCCCCC"
+            android:textSize="13sp"
+            android:layout_marginBottom="4dp" />
+
+        <Spinner
+            android:id="@+id/spinnerVoiceMood"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:background="#2A2A2A"
+            android:padding="12dp"
+            android:layout_marginBottom="16dp" />
+
+        <!-- Memory storage -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Memory Storage"
+            android:textColor="#CCCCCC"
+            android:textSize="13sp"
+            android:layout_marginBottom="4dp" />
+
+        <Spinner
+            android:id="@+id/spinnerMemoryStorage"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:background="#2A2A2A"
+            android:padding="12dp"
+            android:layout_marginBottom="24dp" />
+
         <!-- Section: Wake Word -->
         <TextView
             android:layout_width="match_parent"

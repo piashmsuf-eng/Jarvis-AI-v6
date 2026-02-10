@@ -11,7 +11,9 @@ import android.provider.Settings
 import android.util.Log
 import android.view.View
 import android.widget.ArrayAdapter
+import android.widget.EditText
 import android.widget.Toast
+import android.text.InputType
 import androidx.appcompat.app.AppCompatActivity
 import com.jarvis.ai.accessibility.JarvisAccessibilityService
 import com.jarvis.ai.databinding.ActivitySettingsBinding
@@ -63,6 +65,22 @@ class SettingsActivity : AppCompatActivity() {
         "Max Focus"
     )
 
+    private val voiceMoodLabels = arrayOf(
+        "Normal",
+        "Sad (slow)",
+        "Happy (energetic)",
+        "Romantic (soft)",
+        "Angry (intense)",
+        "Echo/Reverb"
+    )
+
+    private val memoryStorageLabels = arrayOf(
+        "Internal Storage",
+        "External SD Card"
+    )
+
+    private var suppressDeveloperSwitch = false
+
     // Theme presets
     private val themeLabels = arrayOf(
         "Jarvis Cyan (#00E5FF)",
@@ -98,6 +116,7 @@ class SettingsActivity : AppCompatActivity() {
         setupTtsSpinner()
         setupLanguageSpinners()
         setupThemeSpinner()
+        setupDeveloperSwitch()
         loadSavedSettings()
         setupPermissionButtons()
         setupSaveButton()
@@ -209,6 +228,31 @@ class SettingsActivity : AppCompatActivity() {
             sensitivityLabels
         )
         binding.spinnerVoiceSensitivity.adapter = sensitivityAdapter
+
+        val moodAdapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            voiceMoodLabels
+        )
+        binding.spinnerVoiceMood.adapter = moodAdapter
+
+        val storageAdapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            memoryStorageLabels
+        )
+        binding.spinnerMemoryStorage.adapter = storageAdapter
+    }
+
+    private fun setupDeveloperSwitch() {
+        binding.switchDeveloperMode.setOnCheckedChangeListener { _, isChecked ->
+            if (suppressDeveloperSwitch) return@setOnCheckedChangeListener
+            if (isChecked) {
+                showDeveloperPasswordDialog()
+            } else {
+                prefManager.developerModeEnabled = false
+            }
+        }
     }
 
     private fun loadSavedSettings() {
@@ -253,6 +297,13 @@ class SettingsActivity : AppCompatActivity() {
         binding.spinnerVoiceSensitivity.setSelection(sensIndex)
 
         binding.etSystemPrompt.setText(prefManager.customSystemPrompt)
+        suppressDeveloperSwitch = true
+        binding.switchDeveloperMode.isChecked = prefManager.developerModeEnabled
+        suppressDeveloperSwitch = false
+        val moodIndex = prefManager.emotionalVoicePreset.coerceIn(0, voiceMoodLabels.size - 1)
+        binding.spinnerVoiceMood.setSelection(moodIndex)
+        val storageIndex = if (prefManager.memoryStorage == "external") 1 else 0
+        binding.spinnerMemoryStorage.setSelection(storageIndex)
 
         // Theme
         binding.spinnerTheme.setSelection(prefManager.themeIndex.coerceIn(0, themeLabels.size - 1))
@@ -483,6 +534,45 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
+    private fun showDeveloperPasswordDialog() {
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            hint = "Enter password"
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Developer Mode")
+            .setMessage("Password lagbe (default: piashkw)")
+            .setView(input)
+            .setPositiveButton("Unlock") { dialog, _ ->
+                val text = input.text.toString()
+                if (text == "piashkw") {
+                    prefManager.developerModeEnabled = true
+                    Toast.makeText(this, "Developer mode enabled", Toast.LENGTH_SHORT).show()
+                } else {
+                    suppressDeveloperSwitch = true
+                    binding.switchDeveloperMode.isChecked = false
+                    suppressDeveloperSwitch = false
+                    prefManager.developerModeEnabled = false
+                    Toast.makeText(this, "Wrong password", Toast.LENGTH_SHORT).show()
+                }
+                dialog.dismiss()
+            }
+            .setNegativeButton("Cancel") { dialog, _ ->
+                suppressDeveloperSwitch = true
+                binding.switchDeveloperMode.isChecked = false
+                suppressDeveloperSwitch = false
+                prefManager.developerModeEnabled = false
+                dialog.dismiss()
+            }
+            .setOnCancelListener {
+                suppressDeveloperSwitch = true
+                binding.switchDeveloperMode.isChecked = false
+                suppressDeveloperSwitch = false
+                prefManager.developerModeEnabled = false
+            }
+            .show()
+    }
+
     // ------------------------------------------------------------------ //
     //  Save                                                               //
     // ------------------------------------------------------------------ //
@@ -520,6 +610,9 @@ class SettingsActivity : AppCompatActivity() {
         prefManager.ttsLanguage = languageCodes[binding.spinnerTtsLanguage.selectedItemPosition]
         prefManager.voiceSensitivity = binding.spinnerVoiceSensitivity.selectedItemPosition
         prefManager.customSystemPrompt = binding.etSystemPrompt.text.toString().trim()
+        prefManager.developerModeEnabled = binding.switchDeveloperMode.isChecked
+        prefManager.emotionalVoicePreset = binding.spinnerVoiceMood.selectedItemPosition
+        prefManager.memoryStorage = if (binding.spinnerMemoryStorage.selectedItemPosition == 1) "external" else "internal"
 
         // Theme
         prefManager.themeIndex = binding.spinnerTheme.selectedItemPosition

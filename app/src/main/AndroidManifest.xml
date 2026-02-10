@@ -67,6 +67,9 @@
     <!-- Termux integration -->
     <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
 
+    <!-- Modify system settings for brightness control -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+
     <!-- Battery / device health queries -->
     <uses-permission android:name="android.permission.BATTERY_STATS"
         tools:ignore="ProtectedPermissions" />
@@ -252,6 +255,10 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <receiver
+            android:name=".service.ScheduledTaskReceiver"
+            android:exported="false" />
 
     </application>
 </manifest>
