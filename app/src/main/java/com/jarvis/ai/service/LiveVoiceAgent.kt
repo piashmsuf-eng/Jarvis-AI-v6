@@ -962,9 +962,8 @@ class LiveVoiceAgent : Service() {
                     if (command.isNotBlank()) {
                         try {
                             // Send command to Termux via RUN_COMMAND intent
-                            val termuxIntent = Intent().apply {
+                            val termuxIntent = Intent("com.termux.RUN_COMMAND").apply {
                                 setClassName("com.termux", "com.termux.app.RunCommandService")
-                                action = "com.termux.RUN_COMMAND"
                                 putExtra("com.termux.RUN_COMMAND_PATH", "/data/data/com.termux/files/usr/bin/bash")
                                 putExtra("com.termux.RUN_COMMAND_ARGUMENTS", arrayOf("-c", command))
                                 putExtra("com.termux.RUN_COMMAND_BACKGROUND", true)
