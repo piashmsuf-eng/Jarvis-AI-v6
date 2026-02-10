@@ -761,7 +761,7 @@ class LiveVoiceAgent : Service() {
         Log.d(TAG, "Executing action: $type")
 
         try {
-            action@ when (type) {
+            when (type) {
                 "read_screen" -> {
                     val a11y = JarvisAccessibilityService.instance
                     if (a11y != null) {
@@ -1108,7 +1108,7 @@ class LiveVoiceAgent : Service() {
                 }
 
                 "set_brightness" -> {
-                    val level = action.get("level")?.asInt ?: return@action
+                    val level = action.get("level")?.asInt ?: return
                     if (Settings.System.canWrite(this@LiveVoiceAgent)) {
                         val clamped = level.coerceIn(0, 255)
                         Settings.System.putInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS, clamped)
@@ -1141,7 +1141,7 @@ class LiveVoiceAgent : Service() {
                 }
 
                 "set_alarm" -> {
-                    val hour = action.get("hour")?.asInt ?: return@action
+                    val hour = action.get("hour")?.asInt ?: return
                     val minute = action.get("minute")?.asInt ?: 0
                     val message = action.get("message")?.asString ?: "Jarvis alarm"
                     try {
@@ -1160,7 +1160,7 @@ class LiveVoiceAgent : Service() {
                 }
 
                 "set_timer" -> {
-                    val seconds = action.get("seconds")?.asInt ?: return@action
+                    val seconds = action.get("seconds")?.asInt ?: return
                     val message = action.get("message")?.asString ?: "Jarvis timer"
                     try {
                         val intent = Intent(AlarmClock.ACTION_SET_TIMER).apply {
@@ -1233,7 +1233,7 @@ class LiveVoiceAgent : Service() {
                 "add_contact" -> {
                     val name = action.get("name")?.asString ?: ""
                     val phone = action.get("phone")?.asString ?: ""
-                    if (name.isBlank() || phone.isBlank()) return@action
+                    if (name.isBlank() || phone.isBlank()) return
                     try {
                         val values = ContentValues().apply {
                             put(ContactsContract.RawContacts.ACCOUNT_TYPE, null as String?)
@@ -1288,7 +1288,7 @@ class LiveVoiceAgent : Service() {
                         emitLog("JARVIS", "Bluetooth ${if (enable == true) "ON" else "OFF"}")
                     } else {
                         try {
-                            val intent = Intent(Panel.ACTION_BLUETOOTH).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                            val intent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
                             startActivity(intent)
                             emitLog("JARVIS", "Bluetooth panel khule dilam Boss")
                         } catch (e: Exception) {
@@ -1324,8 +1324,8 @@ class LiveVoiceAgent : Service() {
                 }
 
                 "kill_app" -> {
-                    if (!developerModeOrWarn()) return@action
-                    val packageName = action.get("package")?.asString ?: return@action
+                    if (!developerModeOrWarn()) return
+                    val packageName = action.get("package")?.asString ?: return
                     try {
                         Runtime.getRuntime().exec(arrayOf("sh", "-c", "am force-stop $packageName"))
                         emitLog("JARVIS", "$packageName force-stop diyechi")
@@ -1335,7 +1335,7 @@ class LiveVoiceAgent : Service() {
                 }
 
                 "reboot_phone" -> {
-                    if (!developerModeOrWarn()) return@action
+                    if (!developerModeOrWarn()) return
                     try {
                         Runtime.getRuntime().exec(arrayOf("su", "-c", "reboot"))
                         emitLog("JARVIS", "Reboot command pathano holo")
@@ -1354,7 +1354,7 @@ class LiveVoiceAgent : Service() {
                 }
 
                 "set_reminder" -> {
-                    val text = action.get("text")?.asString ?: return@action
+                    val text = action.get("text")?.asString ?: return
                     val minutes = action.get("minutes")?.asInt ?: 1
                     val task = "Reminder: $text"
                     scheduleAlarmTask(task, minutes * 60 * 1000L)
@@ -1390,7 +1390,7 @@ class LiveVoiceAgent : Service() {
                 }
 
                 "search_files" -> {
-                    val query = action.get("query")?.asString ?: return@action
+                    val query = action.get("query")?.asString ?: return
                     scope.launch(Dispatchers.IO) {
                         try {
                             val projection = arrayOf(MediaStore.Files.FileColumns.DISPLAY_NAME, MediaStore.Files.FileColumns.DATA)
@@ -1421,7 +1421,7 @@ class LiveVoiceAgent : Service() {
                 }
 
                 "clean_cache" -> {
-                    if (!developerModeOrWarn()) return@action
+                    if (!developerModeOrWarn()) return
                     scope.launch(Dispatchers.IO) {
                         try {
                             Runtime.getRuntime().exec(arrayOf("sh", "-c", "pm trim-caches 1000G")).waitFor()
@@ -1443,8 +1443,8 @@ class LiveVoiceAgent : Service() {
                 }
 
                 "dev_shell" -> {
-                    if (!developerModeOrWarn()) return@action
-                    val command = action.get("command")?.asString ?: return@action
+                    if (!developerModeOrWarn()) return
+                    val command = action.get("command")?.asString ?: return
                     scope.launch(Dispatchers.IO) {
                         try {
                             val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", command))
@@ -1483,7 +1483,7 @@ class LiveVoiceAgent : Service() {
                 }
 
                 "run_root" -> {
-                    if (!developerModeOrWarn()) return@action
+                    if (!developerModeOrWarn()) return
                     val command = action.get("command")?.asString ?: ""
                     if (command.isNotBlank()) {
                         try {
@@ -1538,7 +1538,7 @@ class LiveVoiceAgent : Service() {
                 }
 
                 "edit_file" -> {
-                    if (!developerModeOrWarn()) return@action
+                    if (!developerModeOrWarn()) return
                     val path = action.get("path")?.asString ?: ""
                     val content = action.get("content")?.asString ?: ""
                     if (path.isNotBlank() && content.isNotBlank()) {
@@ -2111,7 +2111,7 @@ class LiveVoiceAgent : Service() {
         return if (prefManager.developerModeEnabled) {
             true
         } else {
-            emitLog("SYSTEM", "Developer mode off. Settings e enable koren.")
+            scope.launch { emitLog("SYSTEM", "Developer mode off. Settings e enable koren.") }
             false
         }
     }
