@@ -128,6 +128,21 @@ class PreferenceManager(context: Context) {
     var ttsLanguage: String
         get() = prefs.getString(KEY_TTS_LANGUAGE, "bn-BD") ?: "bn-BD"
         set(value) = prefs.edit().putString(KEY_TTS_LANGUAGE, value).apply()
+    
+    /** Bengali voice ID for Cartesia TTS */
+    var bengaliVoiceId: String
+        get() = prefs.getString(KEY_BENGALI_VOICE_ID, "bengali-male-professional") ?: "bengali-male-professional"
+        set(value) = prefs.edit().putString(KEY_BENGALI_VOICE_ID, value).apply()
+    
+    /** Enable bilingual mode (Bengali + English) */
+    var bilingualMode: Boolean
+        get() = prefs.getBoolean(KEY_BILINGUAL_MODE, true)
+        set(value) = prefs.edit().putBoolean(KEY_BILINGUAL_MODE, value).apply()
+    
+    /** Auto-detect language from speech */
+    var autoDetectLanguage: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_DETECT_LANGUAGE, true)
+        set(value) = prefs.edit().putBoolean(KEY_AUTO_DETECT_LANGUAGE, value).apply()
 
     var customSystemPrompt: String
         get() = prefs.getString(KEY_SYSTEM_PROMPT, "") ?: ""
@@ -229,5 +244,8 @@ class PreferenceManager(context: Context) {
         const val KEY_DEVELOPER_MODE = "developer_mode_enabled"
         const val KEY_EMOTIONAL_VOICE = "emotional_voice_preset"
         const val KEY_MEMORY_STORAGE = "memory_storage_mode"
+        const val KEY_BENGALI_VOICE_ID = "bengali_voice_id"
+        const val KEY_BILINGUAL_MODE = "bilingual_mode"
+        const val KEY_AUTO_DETECT_LANGUAGE = "auto_detect_language"
     }
 }

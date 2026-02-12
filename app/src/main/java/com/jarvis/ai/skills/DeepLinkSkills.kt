@@ -25,36 +25,121 @@ object DeepLinkSkills {
     )
 
     private val skills = listOf(
-        // AI Image Generation
+        // AI Image Generation (Bengali + English)
         Skill(
-            keywords = listOf("image banao", "picture create", "draw koro", "pik banao", "photo create"),
+            keywords = listOf(
+                // English
+                "image banao", "picture create", "draw koro", "pik banao", "photo create",
+                // Bengali
+                "ছবি বানাও", "ছবি তৈরি করো", "ছবি আঁকো", "ফটো বানাও", "পিকচার বানাও"
+            ),
             description = "Create AI images",
-            deepLink = "xiaomiai://ai/image",  // Xiaomi AI
+            deepLink = "xiaomiai://ai/image",
             fallbackPackage = null
         ),
         
-        // Navigation
+        // Navigation (Bengali + English)
         Skill(
-            keywords = listOf("navigate", "rasta dekha", "direction", "map", "location jao"),
+            keywords = listOf(
+                // English
+                "navigate", "rasta dekha", "direction", "map", "location jao",
+                // Bengali
+                "রাস্তা দেখাও", "দিক নির্দেশনা", "ম্যাপ", "লোকেশন যাও", "নেভিগেট করো"
+            ),
             description = "Navigate to location",
-            deepLink = "google.navigation:q=",  // Google Maps
+            deepLink = "google.navigation:q=",
             fallbackPackage = "com.google.android.apps.maps"
         ),
         
-        // Music
+        // Music - Spotify (Bengali + English)
         Skill(
-            keywords = listOf("play music", "gan bajao", "song play", "music chalao"),
-            description = "Play music",
-            deepLink = "spotify:search:",  // Spotify
+            keywords = listOf(
+                // English
+                "play music", "gan bajao", "song play", "music chalao",
+                // Bengali
+                "গান বাজাও", "গান চালাও", "মিউজিক বাজাও", "স্পটিফাই", "গান শুনাও"
+            ),
+            description = "Play music on Spotify",
+            deepLink = "spotify:search:",
             fallbackPackage = "com.spotify.music"
         ),
         
-        // Food delivery (delegation to Meituan AI if available)
+        // Food delivery (Bengali + English)
         Skill(
-            keywords = listOf("khawabo", "food order", "khabar", "delivery"),
+            keywords = listOf(
+                // English
+                "khawabo", "food order", "khabar", "delivery",
+                // Bengali
+                "খাবার অর্ডার", "খাবার আনাও", "ডেলিভারি", "খাবো"
+            ),
             description = "Order food",
             deepLink = "imeituan://www.meituan.com/home",
             fallbackPackage = null
+        ),
+        
+        // YouTube (Bengali + English)
+        Skill(
+            keywords = listOf(
+                // English
+                "youtube", "youtube kholo", "video dekh", "youtube open",
+                // Bengali
+                "ইউটিউব", "ইউটিউব খোলো", "ভিডিও দেখ", "ইউটিউব চালাও"
+            ),
+            description = "Open YouTube",
+            deepLink = "vnd.youtube://",
+            fallbackPackage = "com.google.android.youtube"
+        ),
+        
+        // WhatsApp (Bengali + English)
+        Skill(
+            keywords = listOf(
+                // English
+                "whatsapp", "whatsapp kholo", "whatsapp open",
+                // Bengali
+                "হোয়াটসঅ্যাপ", "হোয়াটসঅ্যাপ খোলো", "হোয়াটসঅ্যাপ চালু করো"
+            ),
+            description = "Open WhatsApp",
+            deepLink = "whatsapp://",
+            fallbackPackage = "com.whatsapp"
+        ),
+        
+        // Camera (Bengali + English)
+        Skill(
+            keywords = listOf(
+                // English
+                "camera", "camera kholo", "photo le", "picture le",
+                // Bengali
+                "ক্যামেরা", "ক্যামেরা খোলো", "ফটো তোলো", "ছবি তোলো"
+            ),
+            description = "Open camera",
+            deepLink = "android.media.action.IMAGE_CAPTURE",
+            fallbackPackage = null
+        ),
+        
+        // Settings (Bengali + English)
+        Skill(
+            keywords = listOf(
+                // English
+                "settings", "settings kholo", "setting open",
+                // Bengali
+                "সেটিংস", "সেটিংস খোলো", "সেটিং খোলো"
+            ),
+            description = "Open settings",
+            deepLink = "android.settings.SETTINGS",
+            fallbackPackage = null
+        ),
+        
+        // Chrome Browser (Bengali + English)
+        Skill(
+            keywords = listOf(
+                // English
+                "chrome", "browser", "chrome kholo", "web browser",
+                // Bengali
+                "ক্রোম", "ব্রাউজার", "ক্রোম খোলো", "ওয়েব ব্রাউজার"
+            ),
+            description = "Open Chrome",
+            deepLink = "googlechrome://",
+            fallbackPackage = "com.android.chrome"
         )
     )
 

@@ -5,6 +5,8 @@ import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.jarvis.ai.accessibility.JarvisAccessibilityService
+import com.jarvis.ai.language.BengaliCommandParser
+import com.jarvis.ai.language.LanguageDetector
 import com.jarvis.ai.network.client.LlmClient
 import com.jarvis.ai.network.model.ChatMessage
 import com.jarvis.ai.ui.web.WebViewActivity
@@ -90,14 +92,26 @@ class JarvisBrain(
                     return@launch
                 }
 
-                // Add user message to history
+                // Detect language and parse Bengali commands
+                val language = LanguageDetector.detect(userText)
+                val processedText = when (language) {
+                    LanguageDetector.Language.BENGALI, LanguageDetector.Language.MIXED -> {
+                        // Parse Bengali to English for consistent processing
+                        val parsed = BengaliCommandParser.parse(userText)
+                        Log.d(TAG, "Bengali parsed: '$userText' -> '$parsed'")
+                        parsed
+                    }
+                    else -> userText
+                }
+
+                // Add user message to history (original text)
                 conversationHistory.add(ChatMessage(role = "user", content = userText))
                 trimHistory()
 
-                // Build messages with system prompt
-                val messages = buildMessages(client)
+                // Build messages with system prompt (use processed text for LLM)
+                val messages = buildMessages(client, processedText)
 
-                Log.d(TAG, "Sending to LLM: $userText")
+                Log.d(TAG, "Sending to LLM: $processedText (original: $userText)")
 
                 // Call LLM
                 val result = client.chat(messages)
@@ -303,7 +317,7 @@ class JarvisBrain(
     //  Message Building                                                   //
     // ------------------------------------------------------------------ //
 
-    private fun buildMessages(client: LlmClient): List<ChatMessage> {
+    private fun buildMessages(client: LlmClient, currentInput: String? = null): List<ChatMessage> {
         val messages = mutableListOf<ChatMessage>()
 
         // System prompt
@@ -350,6 +364,11 @@ class JarvisBrain(
 
         // Add conversation history
         messages.addAll(conversationHistory)
+        
+        // If currentInput provided, add as final user message for this turn
+        if (currentInput != null && currentInput != conversationHistory.lastOrNull()?.content) {
+            messages.add(ChatMessage(role = "user", content = currentInput))
+        }
 
         return messages
     }
