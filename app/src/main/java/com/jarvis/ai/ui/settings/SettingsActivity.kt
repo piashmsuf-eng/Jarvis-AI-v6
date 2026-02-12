@@ -532,6 +532,51 @@ class SettingsActivity : AppCompatActivity() {
         binding.btnSave.setOnClickListener {
             saveSettings()
         }
+        
+        // Root auto-enable button
+        binding.btnRootEnable?.setOnClickListener {
+            rootAutoEnable()
+        }
+    }
+    
+    private fun rootAutoEnable() {
+        AlertDialog.Builder(this)
+            .setTitle("Root Auto-Enable")
+            .setMessage("Phone rooted hole automatic Accessibility + Notification ON korbe.\n\nRoot access lagbe — su permission dite hobe.\n\nContinue?")
+            .setPositiveButton("Yes, Enable") { _, _ ->
+                Thread {
+                    try {
+                        // Enable Accessibility Service
+                        val cmd1 = "settings put secure enabled_accessibility_services com.jarvis.ai/.accessibility.JarvisAccessibilityService"
+                        val cmd2 = "settings put secure accessibility_enabled 1"
+                        
+                        // Enable Notification Listener
+                        val cmd3 = "settings put secure enabled_notification_listeners com.jarvis.ai/.service.JarvisNotificationListener"
+                        
+                        // Allow restricted settings
+                        val cmd4 = "appops set com.jarvis.ai ACCESS_RESTRICTED_SETTINGS allow"
+                        
+                        val commands = arrayOf(cmd1, cmd2, cmd3, cmd4)
+                        
+                        for (cmd in commands) {
+                            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
+                            val exit = process.waitFor()
+                            Log.d(TAG, "Root cmd: $cmd [exit=$exit]")
+                        }
+                        
+                        runOnUiThread {
+                            Toast.makeText(this, "Root commands executed! Restart app to verify.", Toast.LENGTH_LONG).show()
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Root enable failed", e)
+                        runOnUiThread {
+                            Toast.makeText(this, "Root failed: ${e.message}. Phone rooted ache?", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }.start()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun showDeveloperPasswordDialog() {

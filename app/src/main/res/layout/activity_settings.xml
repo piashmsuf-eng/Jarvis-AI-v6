@@ -594,9 +594,29 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="STEP 4: Enable Overlay Permission"
-            android:layout_marginBottom="24dp"
+            android:layout_marginBottom="12dp"
             app:backgroundTint="#2A2A2A"
             android:textColor="#FFFFFF" />
+
+        <!-- ROOT AUTO-ENABLE -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnRootEnable"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="🔓 ROOT AUTO-ENABLE (Bypass Android 13)"
+            android:layout_marginBottom="8dp"
+            app:backgroundTint="#FF1744"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Rooted phone hole ei button e tap koren — automatic shob enable hoye jabe!"
+            android:textColor="#FF5252"
+            android:textSize="11sp"
+            android:layout_marginBottom="24dp"
+            android:fontFamily="monospace" />
 
         <!-- Save Button -->
         <com.google.android.material.button.MaterialButton
