@@ -29,6 +29,12 @@
 
     <!-- Read phone state for call detection -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    
+    <!-- Call management (Android 9+) -->
+    <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
+    
+    <!-- Read call log -->
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
 
     <!-- Post notifications (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
