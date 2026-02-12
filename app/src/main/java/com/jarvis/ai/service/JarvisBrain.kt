@@ -14,6 +14,9 @@ import com.jarvis.ai.automation.AppController
 import com.jarvis.ai.automation.FileController
 import com.jarvis.ai.automation.RoutineManager
 import com.jarvis.ai.automation.WhatsAppController
+import com.jarvis.ai.personality.PersonalityEngine
+import com.jarvis.ai.vision.ScreenshotController
+import com.jarvis.ai.vision.VisionAnalyzer
 import com.jarvis.ai.network.model.ChatMessage
 import com.jarvis.ai.ui.web.WebViewActivity
 import com.jarvis.ai.util.DeviceInfoProvider
@@ -57,6 +60,11 @@ class JarvisBrain(
     private val fileController = FileController(context)
     private val appController = AppController(context)
     private val routineManager = RoutineManager(context)
+    
+    /** Personality and Vision */
+    private val personalityEngine = PersonalityEngine(context, prefManager)
+    private val screenshotController = ScreenshotController(context)
+    private val visionAnalyzer = VisionAnalyzer(context)
 
     /** Callback for UI updates. */
     var onResponseCallback: ((String) -> Unit)? = null
@@ -621,6 +629,78 @@ class JarvisBrain(
                     withContext(Dispatchers.Main) {
                         voiceEngine.speak(response)
                         onResponseCallback?.invoke(response)
+                    }
+                }
+            }
+
+            // ── Personality Actions ──────────────────────────────────────
+            "set_personality" -> {
+                val modeStr = action.get("mode")?.asString?.lowercase()
+                val mode = when (modeStr) {
+                    "professional" -> PersonalityEngine.PersonalityMode.PROFESSIONAL
+                    "casual" -> PersonalityEngine.PersonalityMode.CASUAL
+                    "funny" -> PersonalityEngine.PersonalityMode.FUNNY
+                    "romantic" -> PersonalityEngine.PersonalityMode.ROMANTIC
+                    "jarvis", "movie" -> PersonalityEngine.PersonalityMode.JARVIS_MOVIE
+                    else -> null
+                }
+                
+                if (mode != null) {
+                    personalityEngine.setMode(mode)
+                    val response = personalityEngine.getSuccessMessage("Personality changed to ${mode.name}")
+                    voiceEngine.speak(response)
+                    onResponseCallback?.invoke(response)
+                } else {
+                    voiceEngine.speak("Unknown personality mode: $modeStr")
+                }
+            }
+
+            "get_personality" -> {
+                val currentMode = personalityEngine.getCurrentMode()
+                val response = "Current personality mode: ${currentMode.name}"
+                voiceEngine.speak(response)
+                onResponseCallback?.invoke(response)
+            }
+
+            // ── Vision Actions ───────────────────────────────────────────
+            "take_screenshot" -> {
+                val result = screenshotController.takeScreenshot()
+                val response = if (result.success) {
+                    result.message ?: "Screenshot taken successfully"
+                } else {
+                    "Failed to take screenshot: ${result.error}"
+                }
+                voiceEngine.speak(response)
+                onResponseCallback?.invoke(response)
+            }
+
+            "analyze_screen" -> {
+                val a11y = JarvisAccessibilityService.instance
+                if (a11y != null) {
+                    val screenText = a11y.readScreenTextFlat()
+                    val analysis = visionAnalyzer.analyzeScreenText(screenText)
+                    voiceEngine.speak(analysis.summary)
+                    onResponseCallback?.invoke(analysis.summary)
+                } else {
+                    voiceEngine.speak("Accessibility service not enabled")
+                }
+            }
+
+            "extract_text" -> {
+                // This would be called after taking screenshot
+                scope.launch {
+                    val result = screenshotController.takeScreenshot()
+                    if (result.success && result.filePath != null) {
+                        val textResult = visionAnalyzer.extractText(result.filePath)
+                        val response = visionAnalyzer.formatForVoice(textResult)
+                        withContext(Dispatchers.Main) {
+                            voiceEngine.speak(response)
+                            onResponseCallback?.invoke(response)
+                        }
+                    } else {
+                        withContext(Dispatchers.Main) {
+                            voiceEngine.speak("Could not take screenshot")
+                        }
                     }
                 }
             }

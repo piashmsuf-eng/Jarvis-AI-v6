@@ -143,6 +143,11 @@ class PreferenceManager(context: Context) {
     var autoDetectLanguage: Boolean
         get() = prefs.getBoolean(KEY_AUTO_DETECT_LANGUAGE, true)
         set(value) = prefs.edit().putBoolean(KEY_AUTO_DETECT_LANGUAGE, value).apply()
+    
+    /** Personality mode (0=Professional, 1=Casual, 2=Funny, 3=Romantic, 4=Jarvis Movie) */
+    var personalityMode: Int
+        get() = prefs.getInt(KEY_PERSONALITY_MODE, 0)
+        set(value) = prefs.edit().putInt(KEY_PERSONALITY_MODE, value).apply()
 
     var customSystemPrompt: String
         get() = prefs.getString(KEY_SYSTEM_PROMPT, "") ?: ""
@@ -247,5 +252,6 @@ class PreferenceManager(context: Context) {
         const val KEY_BENGALI_VOICE_ID = "bengali_voice_id"
         const val KEY_BILINGUAL_MODE = "bilingual_mode"
         const val KEY_AUTO_DETECT_LANGUAGE = "auto_detect_language"
+        const val KEY_PERSONALITY_MODE = "personality_mode"
     }
 }
