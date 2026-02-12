@@ -39,7 +39,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="JARVIS AI"
+            android:text="MAYA AI"
             android:textColor="#00E5FF"
             android:textSize="32sp"
             android:textStyle="bold"
@@ -53,7 +53,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Ultimate AI Assistant"
+            android:text="Your loving AI companion"
             android:textColor="#7A8899"
             android:textSize="13sp"
             android:fontFamily="monospace"
@@ -160,7 +160,7 @@
             android:fontFamily="monospace"
             android:gravity="center"
             android:lineSpacingMultiplier="1.5"
-            android:text="Powered by: OpenRouter • Groq • Gemini • Claude • FreedomGPT\nVoice: Cartesia TTS • Android TTS\nWake Word: Picovoice Porcupine\n\n© 2024-2026 Piash. All rights reserved.\nJARVIS AI — Like Iron Man, but on your phone." />
+            android:text="Powered by: OpenRouter • Groq • Gemini • Claude • FreedomGPT\nVoice: Cartesia TTS • Android TTS\nWake Word: Picovoice Porcupine\n\n© 2024-2026 Piash. All rights reserved.\nMAYA AI — Like a caring friend, always in your pocket." />
 
         <View
             android:layout_width="1dp"

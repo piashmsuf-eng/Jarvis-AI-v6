@@ -115,7 +115,7 @@ class SplashActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
             tts?.language = Locale("bn", "BD")
-            tts?.speak("Welcome Boss! Jarvis systems online.", TextToSpeech.QUEUE_FLUSH, null, "welcome")
+            tts?.speak("Hello Boss, Maya achi apnar sathe", TextToSpeech.QUEUE_FLUSH, null, "welcome")
         }
     }
 

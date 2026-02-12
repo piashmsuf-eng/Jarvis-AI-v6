@@ -18,12 +18,12 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintVertical_bias="0.35" />
 
-    <!-- JARVIS AI Title -->
+    <!-- MAYA AI Title -->
     <TextView
         android:id="@+id/tvSplashTitle"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="JARVIS AI"
+        android:text="MAYA AI"
         android:textColor="#00E5FF"
         android:textSize="36sp"
         android:textStyle="bold"

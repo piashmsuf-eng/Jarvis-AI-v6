@@ -150,7 +150,7 @@ class MainActivity : AppCompatActivity() {
         when (intent.action) {
             ACTION_WAKE_WORD_DETECTED -> {
                 // "Hey Jarvis" detected — auto-activate if not already running
-                appendLog("SYSTEM", "Wake word detected — Hey Jarvis!")
+                appendLog("SYSTEM", "Wake word detected — Hey Maya!")
                 if (!LiveVoiceAgent.isActive) {
                     activateJarvis()
                 }
@@ -161,14 +161,14 @@ class MainActivity : AppCompatActivity() {
                 if (!LiveVoiceAgent.isActive) {
                     activateJarvis()
                 } else {
-                    appendLog("SYSTEM", "Jarvis is already active and listening.")
+                    appendLog("SYSTEM", "Maya is already active and listening.")
                 }
             }
 
             ACTION_STOP_LISTENING -> {
                 if (LiveVoiceAgent.isActive) {
                     LiveVoiceAgent.stop(this)
-                    appendLog("SYSTEM", "Jarvis deactivated via overlay.")
+                    appendLog("SYSTEM", "Maya deactivated via overlay.")
                     updateActivateButton()
                 }
             }
@@ -194,7 +194,7 @@ class MainActivity : AppCompatActivity() {
         binding.btnActivate.setOnClickListener {
             if (LiveVoiceAgent.isActive) {
                 LiveVoiceAgent.stop(this)
-                appendLog("SYSTEM", "Jarvis deactivated.")
+                    appendLog("SYSTEM", "Maya deactivated.")
             } else {
                 activateJarvis()
             }
@@ -227,7 +227,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
         LiveVoiceAgent.start(this)
-        appendLog("SYSTEM", "Jarvis activating...")
+                appendLog("SYSTEM", "Maya activating...")
     }
 
     /**
@@ -390,11 +390,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateActivateButton() {
         if (LiveVoiceAgent.isActive) {
-            binding.btnActivate.text = "DEACTIVATE JARVIS"
+            binding.btnActivate.text = "DEACTIVATE MAYA"
             binding.btnActivate.backgroundTintList = ColorStateList.valueOf(COLOR_INACTIVE)
             binding.btnActivate.setTextColor(Color.WHITE)
         } else {
-            binding.btnActivate.text = "ACTIVATE JARVIS"
+            binding.btnActivate.text = "ACTIVATE MAYA"
             binding.btnActivate.backgroundTintList = ColorStateList.valueOf(COLOR_LISTENING)
             binding.btnActivate.setTextColor(0xFF0A0A0F.toInt())
         }

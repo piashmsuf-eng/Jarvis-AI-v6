@@ -9,7 +9,7 @@
     tools:context=".ui.main.MainActivity">
 
     <!-- ============================================================ -->
-    <!--  TOP BAR — Jarvis AI branding with glow title                 -->
+    <!--  TOP BAR — Maya AI branding with glow title                 -->
     <!-- ============================================================ -->
     <LinearLayout
         android:id="@+id/topBar"
@@ -34,7 +34,7 @@
                 android:id="@+id/tvTitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="JARVIS AI"
+                android:text="MAYA AI"
                 android:textColor="#00E5FF"
                 android:textSize="28sp"
                 android:textStyle="bold"
@@ -153,7 +153,7 @@
     </com.google.android.material.card.MaterialCardView>
 
     <!-- ============================================================ -->
-    <!--  ARC REACTOR — Center pulse circle (Jarvis core)              -->
+    <!--  ARC REACTOR — Center pulse circle (Maya core)              -->
     <!-- ============================================================ -->
 
     <!-- Background glow layer (larger, softer, slower pulse) -->
@@ -296,12 +296,12 @@
                 app:tint="#00E5FF" />
         </LinearLayout>
 
-        <!-- THE BIG BUTTON — Jarvis activate with glow -->
+        <!-- THE BIG BUTTON — Maya activate with glow -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnActivate"
             android:layout_width="match_parent"
             android:layout_height="60dp"
-            android:text="ACTIVATE JARVIS"
+            android:text="ACTIVATE MAYA"
             android:textSize="18sp"
             android:textStyle="bold"
             android:textColor="#0A0A0F"

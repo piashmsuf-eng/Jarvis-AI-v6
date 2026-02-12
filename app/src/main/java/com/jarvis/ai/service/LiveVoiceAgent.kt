@@ -1,128 +1,48 @@
 package com.jarvis.ai.service
 
-import android.app.AlarmManager
-import android.accessibilityservice.AccessibilityService
 import android.app.Notification
 import android.app.PendingIntent
 import android.app.Service
-import android.bluetooth.BluetoothAdapter
-import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
-import android.hardware.camera2.CameraManager
-import android.location.Geocoder
-import android.location.LocationManager
-import android.media.AudioAttributes
-import android.media.AudioFocusRequest
-import android.media.AudioManager
-import android.media.MediaPlayer
-import android.media.MediaRecorder
-import android.net.Uri
-import android.net.wifi.WifiManager
-import android.os.Build
-import android.provider.AlarmClock
-import android.provider.CalendarContract
-import android.provider.ContactsContract
-import android.provider.MediaStore
-import android.provider.Settings
-import android.provider.Settings.Panel
-import android.view.KeyEvent
 import android.os.Bundle
 import android.os.IBinder
-import android.os.PowerManager
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
-import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.app.NotificationCompat
-import android.text.format.Formatter
 import com.jarvis.ai.JarvisApplication
 import com.jarvis.ai.accessibility.JarvisAccessibilityService
-import com.jarvis.ai.network.client.CartesiaTtsClient
-import com.jarvis.ai.network.client.CartesiaWebSocketManager
 import com.jarvis.ai.network.client.LlmClient
 import com.jarvis.ai.network.model.ChatMessage
-import com.jarvis.ai.network.model.LlmProvider
-import com.jarvis.ai.network.model.TtsProvider
 import com.jarvis.ai.ui.main.MainActivity
 import com.jarvis.ai.ui.web.WebViewActivity
-import com.jarvis.ai.util.DeviceInfoProvider
 import com.jarvis.ai.util.PreferenceManager
-import com.google.gson.Gson
-import com.google.gson.JsonObject
-import com.jarvis.ai.memory.JarvisMemoryDb
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import org.json.JSONObject
-import java.io.File
-import java.net.URL
-import java.text.SimpleDateFormat
 import java.util.*
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
 
 /**
- * LiveVoiceAgent — The always-on, autonomous Bangla voice assistant.
- *
- * CONTINUOUS LOOP: ACTIVATE -> GREET -> LISTEN -> THINK -> SPEAK -> LISTEN -> ...
- *
- * KEY FIX: SpeechRecognizer is recreated before each listen cycle to avoid
- * the Android bug where it stops responding after one use. All operations
- * have timeouts and try-catch to ensure the loop NEVER breaks.
- *
- * Modded by Piash
+ * LiveVoiceAgent — MINIMAL WORKING VERSION
+ * 
+ * Simple voice loop: Listen → Speak "OK Boss" → Call LLM → Speak response → Listen again
+ * 
+ * ONLY these features:
+ * - Basic greeting
+ * - Voice loop with Bengali STT
+ * - Android TTS only
+ * - Simple LLM call
+ * - Basic actions: open_app, read_screen, web_search, speak
  */
 class LiveVoiceAgent : Service() {
 
     companion object {
         private const val TAG = "LiveVoiceAgent"
         private const val NOTIFICATION_ID = 2001
-        private const val WAKELOCK_TAG = "JarvisAI:VoiceAgent"
-
-        // Timeouts - Optimized for faster response
-        private const val STT_TIMEOUT_MS = 12_000L      // Max 12s for one listen (reduced from 15s)
-        private const val TTS_TIMEOUT_MS = 25_000L       // Max 25s for TTS to finish (reduced from 30s)
-        private const val ACTION_TIMEOUT_MS = 10_000L    // Max 10s for an action
-        private const val MIN_RESTART_DELAY_MS = 100L    // Minimum delay between listen cycles
-        private const val MAX_RESTART_DELAY_MS = 2000L   // Maximum delay between listen cycles
-        const val EXTRA_SCHEDULED_TASK = "extra_scheduled_task"
-        
-        // Conversation tracking
-        private const val ACTIVE_CONVERSATION_WINDOW_MS = 30_000L  // 30s window for active conversation
-        
-        // Partial results display
-        private const val MIN_PARTIAL_TEXT_LENGTH = 3    // Minimum chars to show partial result
-        private const val MAX_PARTIAL_TEXT_DISPLAY_LENGTH = 30  // Max chars to display in notification
-        private const val NOTIFICATION_UPDATE_THROTTLE_MS = 300L  // Min delay between notification updates
-
-        enum class AgentState {
-            INACTIVE, GREETING, LISTENING, THINKING, SPEAKING, EXECUTING, PAUSED
-        }
-
-        @Volatile
-        var instance: LiveVoiceAgent? = null
-            private set
-
-        val isActive: Boolean get() = instance != null
-
-        private val _agentState = MutableStateFlow(AgentState.INACTIVE)
-        val agentState: StateFlow<AgentState> = _agentState.asStateFlow()
-
-        val conversationLog = MutableSharedFlow<ConversationEntry>(
-            replay = 50, extraBufferCapacity = 20
-        )
-
-        val textInput = MutableSharedFlow<String>(extraBufferCapacity = 5)
-
-        private val SHUTDOWN_KEYWORDS = listOf(
-            "jarvis bondho", "jarvis stop", "jarvis off",
-            "বন্ধ হও", "বন্ধ হয়ে যাও", "jarvis bndho",
-            "stop jarvis", "shut down", "বন্ধ"
-        )
 
         fun start(context: Context) {
             val intent = Intent(context, LiveVoiceAgent::class.java)
@@ -138,51 +58,25 @@ class LiveVoiceAgent : Service() {
         }
     }
 
-    // ------------------------------------------------------------------ //
-    //  Core components                                                    //
-    // ------------------------------------------------------------------ //
-
+    // Core components
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val gson = Gson()
-
     private lateinit var prefManager: PreferenceManager
-    private var memoryDb: JarvisMemoryDb? = null
     private var llmClient: LlmClient? = null
-
-    // TTS backends
     private var androidTts: TextToSpeech? = null
     private var androidTtsReady = false
-    private var cartesiaWsManager: CartesiaWebSocketManager? = null
-    private var cartesiaClient: CartesiaTtsClient? = null
-
-    private var wakeLock: PowerManager.WakeLock? = null
-    private var audioManager: AudioManager? = null
-    private var cameraManager: CameraManager? = null
-    private var wifiManager: WifiManager? = null
-    private var mediaRecorder: MediaRecorder? = null
-    private var isRecordingAudio = false
-    private var recorderFile: java.io.File? = null
-    private var phoneFinderPlayer: MediaPlayer? = null
-
-    // Conversation history
     private val conversationHistory = mutableListOf<ChatMessage>()
-    private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
-
-    private var lastAnnouncedNotifTimestamp = 0L
 
     @Volatile
     private var keepListening = false
 
-    // ------------------------------------------------------------------ //
-    //  Service Lifecycle                                                   //
-    // ------------------------------------------------------------------ //
+    // ================================================================
+    // SERVICE LIFECYCLE
+    // ================================================================
 
     override fun onCreate() {
         super.onCreate()
-        instance = this
         prefManager = PreferenceManager(this)
-        Log.i(TAG, "LiveVoiceAgent created — modby piash")
+        Log.i(TAG, "LiveVoiceAgent created - MINIMAL VERSION")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -191,396 +85,481 @@ class LiveVoiceAgent : Service() {
             return START_NOT_STICKY
         }
 
-        startForeground(NOTIFICATION_ID, createNotification("Jarvis active — listening..."))
-        acquireWakeLock()
-        requestBatteryOptimizationExemption()
+        startForeground(NOTIFICATION_ID, createNotification("Jarvis listening..."))
         initializeComponents()
         startConversationLoop()
-        listenForTextInput()
-        intent?.getStringExtra(EXTRA_SCHEDULED_TASK)?.let { handleScheduledTask(it) }
-        return START_STICKY  // Auto-restart if killed by system
-    }
-
-    /** Request ignore battery optimizations so Android doesn't kill us */
-    @Suppress("BatteryLife")
-    private fun requestBatteryOptimizationExemption() {
-        try {
-            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-                val intent = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                    data = android.net.Uri.parse("package:$packageName")
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                startActivity(intent)
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Battery optimization request failed", e)
-        }
+        return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
         keepListening = false
-        _agentState.value = AgentState.INACTIVE
-
         androidTts?.shutdown()
-        cartesiaWsManager?.destroy()
-        cartesiaClient?.stop()
-        releaseWakeLock()
         scope.cancel()
-        ioScope.cancel()
-
-        instance = null
         Log.i(TAG, "LiveVoiceAgent destroyed")
         super.onDestroy()
     }
 
-    // ------------------------------------------------------------------ //
-    //  Initialization                                                     //
-    // ------------------------------------------------------------------ //
+    // ================================================================
+    // INITIALIZATION
+    // ================================================================
 
     private fun initializeComponents() {
-        memoryDb = JarvisMemoryDb.getInstance(this)
-        audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-        cameraManager = getSystemService(Context.CAMERA_SERVICE) as? CameraManager
-        wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-        // LLM client
+        // Initialize LLM client
         val provider = prefManager.selectedLlmProvider
         val apiKey = prefManager.getApiKeyForProvider(provider)
         val model = prefManager.getEffectiveModel()
 
         if (apiKey.isNotBlank()) {
-            val customUrl = when (provider) {
-                LlmProvider.CUSTOM -> prefManager.customBaseUrl
-                LlmProvider.FREEDOMGPT -> prefManager.customBaseUrl.ifBlank { provider.defaultBaseUrl }
-                else -> null
-            }
             llmClient = LlmClient(
                 provider = provider,
                 apiKey = apiKey,
                 model = model,
-                customBaseUrl = customUrl
+                customBaseUrl = null
             )
-        }
-
-        // Initialize Cartesia TTS (primary)
-        initializeCartesiaTts()
-
-        // Android TTS (offline fallback) — uses language from settings
-        androidTts = TextToSpeech(this) { status ->
-            androidTtsReady = status == TextToSpeech.SUCCESS
-            if (androidTtsReady) {
-                setTtsLanguage()
-                Log.i(TAG, "Android TTS ready (fallback)")
-            }
-        }
-    }
-
-    private fun initializeCartesiaTts() {
-        val cartesiaApiKey = prefManager.cartesiaApiKey
-        val voiceId = prefManager.cartesiaVoiceId.ifBlank { CartesiaTtsClient.DEFAULT_VOICE_ID }
-
-        if (cartesiaApiKey.isNotBlank()) {
-            cartesiaClient = CartesiaTtsClient(apiKey = cartesiaApiKey, voiceId = voiceId)
-            Log.i(TAG, "Cartesia HTTP TTS initialized")
-
-            if (prefManager.useCartesiaWebSocket) {
-                cartesiaWsManager = CartesiaWebSocketManager(
-                    apiKey = cartesiaApiKey, voiceId = voiceId
-                ).also { it.connect() }
-                Log.i(TAG, "Cartesia WebSocket TTS initialized")
-            }
+            Log.i(TAG, "LLM client initialized: $provider / $model")
         } else {
-            Log.w(TAG, "No Cartesia API key — using Android TTS only")
+            Log.w(TAG, "No API key configured")
         }
-    }
 
-    // ------------------------------------------------------------------ //
-    //  TEXT INPUT LISTENER                                                 //
-    // ------------------------------------------------------------------ //
-
-    private fun listenForTextInput() {
-        scope.launch {
-            textInput.collect { typedText ->
-                if (typedText.isNotBlank() && keepListening) {
-                    try {
-                        emitLog("YOU (typed)", typedText)
-
-                        if (SHUTDOWN_KEYWORDS.any { typedText.lowercase().contains(it) }) {
-                            emitLog("JARVIS", "ঠিক আছে Boss, বন্ধ হচ্ছি।")
-                            safeSpeak("ঠিক আছে Boss, বন্ধ হচ্ছি।")
-                            stopSelf()
-                            return@collect
-                        }
-
-                        _agentState.value = AgentState.THINKING
-                        updateNotification("Thinking...")
-                        val response = askLlm(typedText)
-                        emitLog("JARVIS", response)
-
-                        _agentState.value = AgentState.SPEAKING
-                        updateNotification("Speaking...")
-                        safeSpeak(response)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Text input processing error", e)
-                    }
+        // Initialize Android TTS with Bengali
+        androidTts = TextToSpeech(this) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                androidTtsReady = true
+                // Set Bengali language
+                val bengaliLocale = Locale("bn", "BD")
+                val result = androidTts?.setLanguage(bengaliLocale)
+                if (result == TextToSpeech.LANG_NOT_SUPPORTED || result == TextToSpeech.LANG_MISSING_DATA) {
+                    Log.w(TAG, "Bengali not supported, using default")
+                    androidTts?.language = Locale.getDefault()
+                } else {
+                    Log.i(TAG, "TTS language set to Bengali")
                 }
+            } else {
+                Log.e(TAG, "TTS initialization failed")
             }
         }
     }
 
-    // ------------------------------------------------------------------ //
-    //  THE MAIN CONVERSATION LOOP — INSTANT RESPONSE, NEVER BREAKS        //
-    //                                                                      //
-    //  Flow:                                                               //
-    //  1. Listen for speech                                                //
-    //  2. IMMEDIATELY say "OK Boss, shunchi" (instant, no LLM)            //
-    //  3. Call LLM in background                                           //
-    //  4. Speak LLM response                                               //
-    //  5. IMMEDIATELY go back to step 1 (no delay)                         //
-    // ------------------------------------------------------------------ //
-
-    /** Acknowledgment phrases - randomly picked for natural feel */
-    private val ACK_PHRASES = listOf(
-        "OK Boss, shunchi",
-        "ji Boss",
-        "accha",
-        "hmm, bujhchi",
-        "thik ache Boss"
-    )
+    // ================================================================
+    // MAIN CONVERSATION LOOP
+    // ================================================================
 
     private fun startConversationLoop() {
         keepListening = true
 
         scope.launch {
-            // Step 1: Greet
-            _agentState.value = AgentState.GREETING
-            
-            // Wait for TTS to be ready before greeting
-            var waitCount = 0
-            while (!androidTtsReady && waitCount < 50) {
-                delay(100)
-                waitCount++
-            }
-            
-            val greeting = generateGreeting()
-            emitLog("JARVIS", greeting)
-            
-            if (androidTtsReady) {
+            try {
+                // Wait for TTS to be ready
+                var waitCount = 0
+                while (!androidTtsReady && waitCount < 50) {
+                    delay(100)
+                    waitCount++
+                }
+
+                if (!androidTtsReady) {
+                    Log.e(TAG, "TTS not ready after 5s, cannot continue")
+                    return@launch
+                }
+
+                // GREETING
+                val greeting = "Hello Boss, I am Maya. How can I help you?"
+                Log.i(TAG, "Greeting: $greeting")
                 safeSpeak(greeting)
-            } else {
-                Log.w(TAG, "TTS not ready after 5s — skipping greeting")
-            }
 
-            // Step 2: CONTINUOUS LOOP
-            while (keepListening) {
-                try {
-                    // ── LISTEN ──
-                    _agentState.value = AgentState.LISTENING
-                    updateNotification("Listening... Bolun Boss!")
+                // CONTINUOUS LOOP
+                while (keepListening) {
+                    try {
+                        updateNotification("Listening... Bolun Boss!")
 
-                    // Check battery status periodically
-                    checkBatterySaver()
+                        // 1. LISTEN
+                        val userSpeech = safeListenForSpeech()
+                        if (userSpeech.isBlank()) {
+                            // No speech detected, listen again
+                            continue
+                        }
 
-                    val userSpeech = safeListenForSpeech()
+                        Log.i(TAG, "User said: '$userSpeech'")
 
-                    if (userSpeech.isBlank()) continue // Immediately re-listen
+                        // Check for shutdown
+                        if (userSpeech.lowercase().contains("jarvis stop") ||
+                            userSpeech.lowercase().contains("jarvis bondho")) {
+                            safeSpeak("Thik ache Boss, bondho hochhi")
+                            stopSelf()
+                            return@launch
+                        }
 
-                    val startTime = System.currentTimeMillis()
-                    emitLog("YOU", userSpeech)
-                    Log.i(TAG, ">>> User said: '$userSpeech'")
+                        // 2. INSTANT "OK Boss" acknowledgment (fire-and-forget)
+                        speakFireAndForget("OK Boss")
 
-                    // ── SHUTDOWN CHECK ──
-                    if (SHUTDOWN_KEYWORDS.any { userSpeech.lowercase().contains(it) }) {
-                        safeSpeak("ঠিক আছে Boss, বন্ধ হচ্ছি।")
-                        stopSelf()
-                        return@launch
+                        // 3. Call LLM in background
+                        updateNotification("Processing...")
+                        val response = try {
+                            withTimeout(15_000L) {
+                                withContext(Dispatchers.IO) {
+                                    askLlm(userSpeech)
+                                }
+                            }
+                        } catch (e: TimeoutCancellationException) {
+                            "Boss, response ashtey deri hochhe. Abar try kori?"
+                        } catch (e: Exception) {
+                            Log.e(TAG, "LLM error", e)
+                            "Boss, problem hoyeche. Abar bolun."
+                        }
+
+                        Log.i(TAG, "LLM response: $response")
+
+                        // 4. Speak the response
+                        updateNotification("Speaking...")
+                        safeSpeak(response)
+
+                        // NO DELAY - immediately go back to listening
+
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Loop error - recovering", e)
+                        delay(500)
                     }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Conversation loop crashed", e)
+            }
+        }
+    }
 
-                    // Normalize speech for matching
-                    val speech = userSpeech.lowercase().trim()
+    // ================================================================
+    // LLM
+    // ================================================================
 
-                    // ── QUICK COMMANDS (J1-J9) ──
-                    val quickCmd = QUICK_COMMANDS[speech.replace(" ", "")]
-                    if (quickCmd != null) {
-                        val parts = quickCmd.split(":")
-                        val actionType = parts[0]
-                        val actionParam = parts.getOrNull(1) ?: ""
-                        val quickAction = com.google.gson.JsonObject().apply {
-                            addProperty("action", actionType)
-                            if (actionParam.isNotBlank()) {
-                                when (actionType) {
-                                    "open_app" -> addProperty("app", actionParam)
-                                    "device_info" -> addProperty("type", actionParam)
-                                    else -> {}
+    private suspend fun askLlm(userText: String): String {
+        val client = llmClient ?: return "Boss, AI setup koreni. Settings e API key dien."
+
+        // Add to conversation history
+        conversationHistory.add(ChatMessage(role = "user", content = userText))
+        if (conversationHistory.size > 20) conversationHistory.removeFirst()
+
+        val messages = buildMessages()
+
+        return withContext(Dispatchers.IO) {
+            try {
+                val result = client.chat(messages)
+                result.fold(
+                    onSuccess = { response ->
+                        conversationHistory.add(ChatMessage(role = "assistant", content = response))
+                        
+                        // Execute any action in the response (non-blocking)
+                        val action = tryParseAction(response)
+                        if (action != null) {
+                            withContext(Dispatchers.Main) {
+                                try {
+                                    executeAction(action)
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Action failed", e)
                                 }
                             }
                         }
-                        emitLog("JARVIS", "Quick command: $quickCmd")
-                        speakFireAndForget("thik ache Boss")
-                        try { executeAction(quickAction) } catch (_: Exception) {}
-                        continue
+
+                        // Strip JSON action block for speaking
+                        response.replace(Regex("""\{[^{}]*"action"[^{}]*\}"""), "").trim()
+                            .ifBlank { "Kore dichhi Boss!" }
+                    },
+                    onFailure = { error ->
+                        Log.e(TAG, "LLM error", error)
+                        "Boss, ektu problem. ${error.message?.take(40)}"
                     }
-
-                    // ── EXPORT COMMAND ──
-                    if (speech.contains("export") || speech.contains("save chat") || speech.contains("chat save")) {
-                        val result = exportConversation()
-                        emitLog("JARVIS", result)
-                        safeSpeak(result)
-                        continue
-                    }
-
-                    // ── INSTANT GREETING (no LLM, ~0ms) ──
-                    if (speech.length < 25 && GREETING_KEYWORDS.any { speech == it || speech.startsWith("$it ") }) {
-                        emitLog("JARVIS", "হ্যাঁ Boss, বলুন!")
-                        safeSpeak("হ্যাঁ Boss, বলুন!")
-                        continue
-                    }
-
-                    // ── INSTANT ACK + PARALLEL LLM ──
-                    _agentState.value = AgentState.THINKING
-                    updateNotification("Processing...")
-
-                    // 1) Say "OK Boss shunchi" IMMEDIATELY (fire-and-forget, no wait)
-                    val ack = ACK_PHRASES.random()
-                    speakFireAndForget(ack)
-                    emitLog("JARVIS", ack)
-
-                    // 2) Start LLM call RIGHT NOW (parallel with ack speaking)
-                    val response = try {
-                        withTimeout(15_000L) {
-                            withContext(Dispatchers.IO) {
-                                askLlm(userSpeech)
-                            }
-                        }
-                    } catch (e: TimeoutCancellationException) {
-                        "Boss, response ashtey deri hochhe. Abar try kori?"
-                    } catch (e: Exception) {
-                        Log.e(TAG, "LLM error", e)
-                        "Boss, problem hoyeche. Abar bolun."
-                    }
-
-                    val elapsed = System.currentTimeMillis() - startTime
-                    Log.i(TAG, ">>> LLM responded in ${elapsed}ms")
-
-                    emitLog("JARVIS", response)
-
-                    // 3) Speak the full response (waits until done)
-                    _agentState.value = AgentState.SPEAKING
-                    updateNotification("Speaking...")
-                    safeSpeak(response)
-
-                    Log.i(TAG, ">>> Total turn: ${System.currentTimeMillis() - startTime}ms")
-
-                    // NO DELAY — immediately go back to listening
-
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    Log.e(TAG, "Loop error — recovering", e)
-                    delay(500)
-                }
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "LLM exception", e)
+                "Boss, network e problem hocchhe."
             }
         }
     }
 
-    private val GREETING_KEYWORDS = listOf(
-        "hello jarvis", "hi jarvis", "hey jarvis", "jarvis",
-        "হ্যালো জার্ভিস", "হেই জার্ভিস", "জার্ভিস",
-        "hello", "hi", "hey"
-    )
+    private fun buildMessages(): List<ChatMessage> {
+        val messages = mutableListOf<ChatMessage>()
 
-    // Quick command shortcuts
-    private val QUICK_COMMANDS = mapOf(
-        "j1" to "open_app:whatsapp",
-        "j2" to "read_messages",
-        "j3" to "open_app:youtube",
-        "j4" to "open_app:chrome",
-        "j5" to "device_info:battery",
-        "j6" to "read_sms",
-        "j7" to "open_app:camera",
-        "j8" to "open_app:settings",
-        "j9" to "web_search",
-        "j0" to "read_screen"
-    )
+        // System prompt
+        val systemPrompt = """
+You are Maya, a helpful Bengali voice assistant. You speak in Bangla mixed with English.
 
-    private val WEATHER_CODES = mapOf(
-        0 to "Clear sky",
-        1 to "Mainly clear",
-        2 to "Partly cloudy",
-        3 to "Overcast",
-        45 to "Fog",
-        48 to "Depositing rime fog",
-        51 to "Light drizzle",
-        53 to "Moderate drizzle",
-        55 to "Dense drizzle",
-        61 to "Slight rain",
-        63 to "Moderate rain",
-        65 to "Heavy rain",
-        71 to "Slight snowfall",
-        73 to "Moderate snowfall",
-        75 to "Heavy snowfall",
-        95 to "Thunderstorm",
-        96 to "Thunderstorm with hail"
-    )
+You can perform these actions by returning JSON:
+- open_app: {"action":"open_app","app":"whatsapp|youtube|chrome|camera|settings"}
+- read_screen: {"action":"read_screen"}
+- web_search: {"action":"web_search","query":"search terms"}
+- speak: Just respond with text (no JSON needed)
 
-    /**
-     * Check if battery is low and switch to saver mode.
-     * In saver mode: longer STT cooldown, skip notifications, shorter LLM context
-     */
-    private var batterySaverMode = false
+Examples:
+User: "WhatsApp kholo"
+Assistant: {"action":"open_app","app":"whatsapp"} WhatsApp khulchi Boss!
 
-    private fun checkBatterySaver() {
+User: "Google e search koro best restaurants"
+Assistant: {"action":"web_search","query":"best restaurants"} Searching Boss!
+
+Keep responses SHORT and FRIENDLY. Mix Bangla and English naturally.
+""".trimIndent()
+
+        messages.add(ChatMessage(role = "system", content = systemPrompt))
+
+        // Add screen context if available
         try {
-            val battery = DeviceInfoProvider.getBatteryInfo(this@LiveVoiceAgent)
-            val wasInSaver = batterySaverMode
-            batterySaverMode = battery.percentage in 1..15 && !battery.isCharging
-
-            if (batterySaverMode && !wasInSaver) {
-                scope.launch {
-                    emitLog("SYSTEM", "Battery ${battery.percentage}% — Battery Saver Mode ON")
-                    speakFireAndForget("Boss, battery ${battery.percentage} percent. Battery saver mode ON.")
-                }
-            } else if (!batterySaverMode && wasInSaver) {
-                scope.launch {
-                    emitLog("SYSTEM", "Battery OK — Normal Mode")
+            val a11y = JarvisAccessibilityService.instance
+            if (a11y != null) {
+                val screenText = a11y.readScreenTextFlat()
+                if (screenText.isNotBlank()) {
+                    messages.add(ChatMessage(
+                        role = "system",
+                        content = "[SCREEN CONTEXT]\nApp: ${a11y.currentPackage}\n${screenText.take(500)}"
+                    ))
                 }
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            Log.w(TAG, "Screen context error", e)
+        }
+
+        // Add conversation history
+        messages.addAll(conversationHistory)
+        return messages
     }
 
-    /**
-     * Export conversation history as a text file.
-     */
-    private suspend fun exportConversation(): String {
+    private fun tryParseAction(response: String): Map<String, String>? {
         return try {
-            val messages = memoryDb?.getRecentMessages(100) ?: return "No messages to export."
-            val sb = StringBuilder("=== JARVIS AI Conversation Export ===\n")
-            sb.appendLine("Date: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date())}")
-            sb.appendLine("modby Piash | fb.com/piashmsuf")
-            sb.appendLine("=" .repeat(40))
-            sb.appendLine()
-            for (msg in messages) {
-                val time = java.text.SimpleDateFormat("MM/dd HH:mm", java.util.Locale.getDefault())
-                    .format(java.util.Date(msg.timestamp))
-                sb.appendLine("[$time] ${msg.role.uppercase()}: ${msg.content}")
-            }
-            // Save to file
-            val dir = getStorageDir("exports")
-            val file = File(dir, "jarvis_export_${System.currentTimeMillis()}.txt")
-            withContext(Dispatchers.IO) { file.writeText(sb.toString()) }
-            emitLog("JARVIS", "Exported to: ${file.absolutePath}")
-            "Conversation exported: ${file.name}"
+            val pattern = """\{[^{}]*"action"\s*:\s*"([^"]+)"[^{}]*\}""".toRegex()
+            val match = pattern.find(response) ?: return null
+            val jsonText = match.value
+            
+            // Simple JSON parsing for action and parameters
+            val actionMatch = """"action"\s*:\s*"([^"]+)"""".toRegex().find(jsonText)
+            val appMatch = """"app"\s*:\s*"([^"]+)"""".toRegex().find(jsonText)
+            val queryMatch = """"query"\s*:\s*"([^"]+)"""".toRegex().find(jsonText)
+            
+            val result = mutableMapOf<String, String>()
+            actionMatch?.groupValues?.get(1)?.let { result["action"] = it }
+            appMatch?.groupValues?.get(1)?.let { result["app"] = it }
+            queryMatch?.groupValues?.get(1)?.let { result["query"] = it }
+            
+            if (result.isNotEmpty()) result else null
         } catch (e: Exception) {
-            Log.e(TAG, "Export failed", e)
-            "Export failed: ${e.message}"
+            Log.e(TAG, "Action parse error", e)
+            null
+        }
+    }
+
+    private suspend fun executeAction(action: Map<String, String>) {
+        val type = action["action"] ?: return
+        Log.d(TAG, "Executing action: $type")
+
+        try {
+            when (type) {
+                "open_app" -> {
+                    val appName = action["app"] ?: return
+                    openApp(appName)
+                }
+
+                "read_screen" -> {
+                    val a11y = JarvisAccessibilityService.instance
+                    if (a11y != null) {
+                        val txt = a11y.readScreenTextFlat()
+                        Log.i(TAG, "Screen: ${txt.take(200)}")
+                    } else {
+                        Log.w(TAG, "Accessibility OFF")
+                    }
+                }
+
+                "web_search" -> {
+                    val query = action["query"] ?: return
+                    WebViewActivity.launchSearch(this@LiveVoiceAgent, query)
+                    Log.i(TAG, "Searching: $query")
+                }
+
+                "speak" -> {
+                    // Just speak the text (already handled in main flow)
+                }
+
+                else -> Log.d(TAG, "Unknown action: $type")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Action execution error: $type", e)
+        }
+    }
+
+    private fun openApp(appName: String) {
+        try {
+            val pm = packageManager
+            val launchIntent = when (appName.lowercase()) {
+                "whatsapp" -> pm.getLaunchIntentForPackage("com.whatsapp")
+                "youtube" -> pm.getLaunchIntentForPackage("com.google.android.youtube")
+                "chrome" -> pm.getLaunchIntentForPackage("com.android.chrome")
+                "camera" -> pm.getLaunchIntentForPackage("com.android.camera")
+                    ?: pm.getLaunchIntentForPackage("com.sec.android.app.camera")
+                "settings" -> Intent(android.provider.Settings.ACTION_SETTINGS)
+                else -> null
+            }
+
+            if (launchIntent != null) {
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(launchIntent)
+                Log.i(TAG, "$appName opened")
+            } else {
+                Log.w(TAG, "$appName not found")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Open app error: $appName", e)
+        }
+    }
+
+    // ================================================================
+    // STT - SPEECH TO TEXT
+    // ================================================================
+
+    private suspend fun safeListenForSpeech(): String {
+        return try {
+            withTimeout(12_000L) {
+                listenForSpeechOnce()
+            }
+        } catch (e: TimeoutCancellationException) {
+            Log.d(TAG, "STT timeout - no speech")
+            ""
+        } catch (e: Exception) {
+            Log.e(TAG, "STT error", e)
+            delay(500)
+            ""
+        }
+    }
+
+    private suspend fun listenForSpeechOnce(): String = withContext(Dispatchers.Main) {
+        if (!SpeechRecognizer.isRecognitionAvailable(this@LiveVoiceAgent)) {
+            Log.e(TAG, "Speech recognition not available")
+            return@withContext ""
+        }
+
+        suspendCoroutine { cont ->
+            var recognizer: SpeechRecognizer? = null
+            var hasResumed = false
+
+            fun safeResume(text: String) {
+                if (!hasResumed) {
+                    hasResumed = true
+                    try {
+                        recognizer?.destroy()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Recognizer destroy error", e)
+                    }
+                    recognizer = null
+                    cont.resume(text)
+                }
+            }
+
+            try {
+                // Create FRESH recognizer each time (critical fix)
+                recognizer = SpeechRecognizer.createSpeechRecognizer(this@LiveVoiceAgent)
+
+                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, "bn-BD") // Bengali
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "bn-BD")
+                    putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 5000L)
+                }
+
+                recognizer.setRecognitionListener(object : RecognitionListener {
+                    override fun onResults(results: Bundle?) {
+                        val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                            ?.firstOrNull() ?: ""
+                        Log.d(TAG, "STT result: '$text'")
+                        safeResume(text)
+                    }
+
+                    override fun onError(error: Int) {
+                        val errorName = when (error) {
+                            SpeechRecognizer.ERROR_NO_MATCH -> "NO_MATCH"
+                            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "TIMEOUT"
+                            SpeechRecognizer.ERROR_NETWORK -> "NETWORK"
+                            else -> "ERROR_$error"
+                        }
+                        Log.d(TAG, "STT error: $errorName")
+                        safeResume("")
+                    }
+
+                    override fun onReadyForSpeech(params: Bundle?) {
+                        Log.d(TAG, "STT ready - listening...")
+                    }
+
+                    override fun onBeginningOfSpeech() {}
+                    override fun onRmsChanged(rmsdB: Float) {}
+                    override fun onBufferReceived(buffer: ByteArray?) {}
+                    override fun onEndOfSpeech() {}
+                    override fun onPartialResults(partial: Bundle?) {}
+                    override fun onEvent(eventType: Int, params: Bundle?) {}
+                })
+
+                recognizer.startListening(intent)
+                Log.d(TAG, "STT startListening called")
+
+            } catch (e: Exception) {
+                Log.e(TAG, "STT start failed", e)
+                safeResume("")
+            }
+        }
+    }
+
+    // ================================================================
+    // TTS - TEXT TO SPEECH
+    // ================================================================
+
+    /**
+     * Speaks text and WAITS until done
+     */
+    private suspend fun safeSpeak(text: String) {
+        if (text.isBlank()) return
+        if (!androidTtsReady) {
+            Log.e(TAG, "TTS not ready")
+            return
+        }
+
+        try {
+            withTimeout(25_000L) {
+                speakAndWait(text)
+            }
+        } catch (e: TimeoutCancellationException) {
+            Log.w(TAG, "TTS timeout - moving on")
+            androidTts?.stop()
+        } catch (e: Exception) {
+            Log.e(TAG, "TTS error", e)
+        }
+    }
+
+    private suspend fun speakAndWait(text: String) {
+        suspendCoroutine { cont ->
+            val utteranceId = "maya_${System.currentTimeMillis()}"
+
+            androidTts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(id: String?) {}
+                
+                override fun onDone(id: String?) {
+                    if (id == utteranceId) {
+                        cont.resume(Unit)
+                    }
+                }
+
+                @Deprecated("Deprecated in Java")
+                override fun onError(id: String?) {
+                    cont.resume(Unit)
+                }
+
+                override fun onError(id: String?, errorCode: Int) {
+                    cont.resume(Unit)
+                }
+            })
+
+            androidTts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
         }
     }
 
     /**
-     * Speaks text WITHOUT waiting for it to finish.
-     * Used for quick acknowledgments while LLM processes.
+     * Speaks text WITHOUT waiting (fire-and-forget)
      */
     private fun speakFireAndForget(text: String) {
         try {
@@ -592,1688 +571,9 @@ class LiveVoiceAgent : Service() {
         }
     }
 
-    // ------------------------------------------------------------------ //
-    //  GREETING                                                           //
-    // ------------------------------------------------------------------ //
-
-    private fun generateGreeting(): String {
-        return "Hello Boss. Jarvis ready. Bolun ki korbo?"
-    }
-
-    // ------------------------------------------------------------------ //
-    //  NOTIFICATION ANNOUNCER                                             //
-    // ------------------------------------------------------------------ //
-
-    private suspend fun announceNewNotifications() {
-        val recentNotifs = JarvisNotificationListener.getRecentNotifications(3)
-        val newNotifs = recentNotifs.filter { it.timestamp > lastAnnouncedNotifTimestamp }
-
-        if (newNotifs.isEmpty()) return
-
-        for (notif in newNotifs) {
-            val announcement = "Boss, ${notif.appName} e ${notif.sender} bolche: ${notif.text}"
-            emitLog("JARVIS", announcement)
-            safeSpeak(announcement)
-            lastAnnouncedNotifTimestamp = notif.timestamp
-        }
-    }
-
-    // ------------------------------------------------------------------ //
-    //  LLM                                                                //
-    // ------------------------------------------------------------------ //
-
-    private suspend fun askLlm(userText: String): String {
-        val client = llmClient ?: return "Boss, AI setup koreni. Settings e API key dien."
-
-        conversationHistory.add(ChatMessage(role = "user", content = userText))
-        // Save to persistent memory
-        try { memoryDb?.saveMessage("user", userText) } catch (_: Exception) {}
-        if (conversationHistory.size > 20) conversationHistory.removeFirst()
-
-        val messages = buildMessages(client)
-
-        return withContext(Dispatchers.IO) {
-            try {
-                val result = client.chat(messages)
-                result.fold(
-                    onSuccess = { response ->
-                        conversationHistory.add(ChatMessage(role = "assistant", content = response))
-                        // Save to persistent memory
-                        try { memoryDb?.saveMessage("assistant", response) } catch (_: Exception) {}
-
-                        // Execute any action in the response (non-blocking)
-                        val action = tryParseAction(response)
-                        if (action != null) {
-                            // Launch action on Main thread, but don't wait for it to block LLM return
-                            withContext(Dispatchers.Main) {
-                                try {
-                                    withTimeout(ACTION_TIMEOUT_MS) {
-                                        executeAction(action, response)
-                                    }
-                                } catch (e: TimeoutCancellationException) {
-                                    Log.w(TAG, "Action timed out: ${action.get("action")?.asString}")
-                                } catch (e: Exception) {
-                                    Log.e(TAG, "Action failed", e)
-                                }
-                            }
-                        }
-
-                        // Strip JSON action block for speaking
-                        response.replace(Regex("""\{[^{}]*"action"[^{}]*\}"""), "").trim()
-                            .ifBlank { "করে দিচ্ছি Boss!" }
-                    },
-                    onFailure = { error ->
-                        Log.e(TAG, "LLM error", error)
-                        "Boss, ektu problem — ${error.message?.take(40)}"
-                    }
-                )
-            } catch (e: Exception) {
-                Log.e(TAG, "LLM exception", e)
-                "Boss, network e problem hocchhe."
-            }
-        }
-    }
-
-    private fun buildMessages(client: LlmClient): List<ChatMessage> {
-        val messages = mutableListOf<ChatMessage>()
-
-        // Use custom system prompt if set, otherwise default
-        val systemPrompt = prefManager.customSystemPrompt.ifBlank { client.JARVIS_SYSTEM_PROMPT }
-        messages.add(ChatMessage(role = "system", content = systemPrompt))
-
-        // Screen context
-        val a11y = JarvisAccessibilityService.instance
-        if (a11y != null) {
-            try {
-                val screenContext = buildString {
-                    append("[CURRENT SCREEN]\n")
-                    append("App: ${a11y.currentPackage}\n")
-                    val chatName = a11y.getCurrentChatName()
-                    if (chatName != null) append("Chat: $chatName\n")
-                    val screenText = a11y.readScreenTextFlat()
-                    if (screenText.isNotBlank()) append("Screen:\n${screenText.take(1500)}")
-                }
-                messages.add(ChatMessage(role = "system", content = screenContext))
-            } catch (e: Exception) {
-                Log.w(TAG, "Screen context error", e)
-            }
-        }
-
-        // Web context
-        try {
-            val lastWebTitle = WebViewActivity.lastPageTitle
-            val lastWebText = WebViewActivity.lastExtractedText
-            if (lastWebTitle.isNotBlank() || lastWebText.isNotBlank()) {
-                val webCtx = "[WEB PAGE]\nTitle: $lastWebTitle\nURL: ${WebViewActivity.lastPageUrl}\n${lastWebText.take(1000)}"
-                messages.add(ChatMessage(role = "system", content = webCtx))
-            }
-        } catch (_: Exception) {}
-
-        // Notifications
-        try {
-            val recentNotifs = JarvisNotificationListener.getRecentNotifications(5)
-            if (recentNotifs.isNotEmpty()) {
-                val ctx = recentNotifs.joinToString("\n") { it.toContextString() }
-                messages.add(ChatMessage(role = "system", content = "[NOTIFICATIONS]\n$ctx"))
-            }
-        } catch (_: Exception) {}
-
-        // Device info
-        try {
-            messages.add(ChatMessage(role = "system", content = "[DEVICE]\n${DeviceInfoProvider.getDeviceSummary(this)}"))
-        } catch (_: Exception) {}
-
-        // Inject persistent memory
-        try {
-            val db = memoryDb
-            if (db != null) {
-                val factsCtx = db.getFactsContext()
-                if (factsCtx.isNotBlank()) {
-                    messages.add(ChatMessage(role = "system", content = factsCtx))
-                }
-                val memoryCtx = db.getMemoryContext(10)
-                if (memoryCtx.isNotBlank()) {
-                    messages.add(ChatMessage(role = "system", content = memoryCtx))
-                }
-            }
-        } catch (_: Exception) {}
-
-        messages.addAll(conversationHistory)
-        return messages
-    }
-
-    // ------------------------------------------------------------------ //
-    //  ACTION PARSING & EXECUTION                                         //
-    // ------------------------------------------------------------------ //
-
-    private fun tryParseAction(response: String): JsonObject? {
-        return try {
-            val pattern = """\{[^{}]*"action"\s*:\s*"[^"]+(?:"[^{}]*)*\}""".toRegex()
-            val match = pattern.find(response) ?: return null
-            gson.fromJson(match.value, JsonObject::class.java)
-        } catch (_: Exception) { null }
-    }
-
-    private suspend fun executeAction(action: JsonObject, fullResponse: String = "") {
-        val type = action.get("action")?.asString ?: return
-        _agentState.value = AgentState.EXECUTING
-        Log.d(TAG, "Executing action: $type")
-
-        try {
-            when (type) {
-                "read_screen" -> {
-                    val a11y = JarvisAccessibilityService.instance
-                    if (a11y != null) {
-                        val txt = a11y.readScreenTextFlat()
-                        emitLog("JARVIS", if (txt.isBlank()) "Screen empty." else "Screen:\n${txt.take(500)}")
-                    } else {
-                        emitLog("SYSTEM", "Accessibility OFF.")
-                    }
-                }
-
-                "read_messages" -> {
-                    val a11y = JarvisAccessibilityService.instance
-                    val count = action.get("count")?.asInt ?: 5
-                    if (a11y != null) {
-                        val msgs = a11y.readLastMessages(count)
-                        val formatted = msgs.joinToString("\n") { "${it.sender}: ${it.text}" }
-                        emitLog("JARVIS", if (formatted.isBlank()) "No messages." else "Messages:\n$formatted")
-                    } else {
-                        emitLog("SYSTEM", "Accessibility OFF.")
-                    }
-                }
-
-                "send_message" -> {
-                    val a11y = JarvisAccessibilityService.instance
-                    val text = action.get("text")?.asString ?: ""
-                    if (a11y != null && text.isNotBlank()) {
-                        // Run sendMessage on IO thread (it has Thread.sleep inside)
-                        val success = withContext(Dispatchers.IO) {
-                            a11y.sendMessage(text)
-                        }
-                        emitLog("JARVIS", if (success) "Message sent: $text" else "Send failed Boss.")
-                    } else if (a11y == null) {
-                        emitLog("SYSTEM", "Accessibility OFF.")
-                    }
-                }
-
-                "click" -> {
-                    val a11y = JarvisAccessibilityService.instance
-                    val target = action.get("target")?.asString ?: ""
-                    if (a11y != null && target.isNotBlank()) {
-                        val success = a11y.clickNodeByText(target)
-                        emitLog("JARVIS", if (success) "Clicked '$target'" else "'$target' not found")
-                    } else if (a11y == null) {
-                        emitLog("SYSTEM", "Accessibility OFF.")
-                    }
-                }
-
-                "type" -> {
-                    val a11y = JarvisAccessibilityService.instance
-                    val text = action.get("text")?.asString ?: ""
-                    if (a11y != null && text.isNotBlank()) {
-                        a11y.typeText(text)
-                        emitLog("JARVIS", "Typed: $text")
-                    } else if (a11y == null) {
-                        emitLog("SYSTEM", "Accessibility OFF.")
-                    }
-                }
-
-                "scroll" -> {
-                    val a11y = JarvisAccessibilityService.instance
-                    val direction = action.get("direction")?.asString ?: "down"
-                    if (a11y != null) {
-                        val dir = if (direction == "up") JarvisAccessibilityService.ScrollDirection.UP
-                        else JarvisAccessibilityService.ScrollDirection.DOWN
-                        a11y.scroll(dir)
-                        emitLog("JARVIS", "Scrolled $direction")
-                    } else {
-                        emitLog("SYSTEM", "Accessibility OFF.")
-                    }
-                }
-
-                "navigate" -> {
-                    val a11y = JarvisAccessibilityService.instance
-                    val target = action.get("target")?.asString ?: ""
-                    if (a11y != null) {
-                        when (target) {
-                            "back" -> a11y.pressBack()
-                            "home" -> a11y.pressHome()
-                            "recents" -> a11y.openRecents()
-                            "notifications" -> a11y.openNotifications()
-                        }
-                        emitLog("JARVIS", "Navigated $target")
-                    } else {
-                        emitLog("SYSTEM", "Accessibility OFF.")
-                    }
-                }
-
-                "web_search" -> {
-                    val query = action.get("query")?.asString ?: ""
-                    if (query.isNotBlank()) {
-                        WebViewActivity.launchSearch(this@LiveVoiceAgent, query)
-                        emitLog("JARVIS", "Searching: $query")
-                    }
-                }
-
-                "open_url" -> {
-                    val url = action.get("url")?.asString ?: ""
-                    if (url.isNotBlank()) {
-                        WebViewActivity.launchUrl(this@LiveVoiceAgent, url)
-                        emitLog("JARVIS", "Opening: $url")
-                    }
-                }
-
-                "device_info" -> {
-                    val infoType = action.get("type")?.asString ?: "all"
-                    val info = when (infoType) {
-                        "battery" -> {
-                            val b = DeviceInfoProvider.getBatteryInfo(this@LiveVoiceAgent)
-                            "Battery ${b.percentage}%. ${if (b.isCharging) "Charging." else "Not charging."}"
-                        }
-                        "network" -> {
-                            val n = DeviceInfoProvider.getNetworkInfo(this@LiveVoiceAgent)
-                            "${n.type}. Down: ${n.downstreamMbps} Mbps, Up: ${n.upstreamMbps} Mbps."
-                        }
-                        else -> DeviceInfoProvider.getDeviceSummary(this@LiveVoiceAgent)
-                    }
-                    emitLog("JARVIS", info)
-                }
-
-                "speak" -> { /* Main loop will speak the response text */ }
-
-                "open_app" -> {
-                    val appName = action.get("app")?.asString ?: ""
-                    if (appName.isNotBlank()) {
-                        try {
-                            val pm = packageManager
-                            val launchIntent = when (appName.lowercase()) {
-                                "whatsapp" -> pm.getLaunchIntentForPackage("com.whatsapp")
-                                "telegram" -> pm.getLaunchIntentForPackage("org.telegram.messenger")
-                                "messenger" -> pm.getLaunchIntentForPackage("com.facebook.orca")
-                                "facebook" -> pm.getLaunchIntentForPackage("com.facebook.katana")
-                                "instagram" -> pm.getLaunchIntentForPackage("com.instagram.android")
-                                "youtube" -> pm.getLaunchIntentForPackage("com.google.android.youtube")
-                                "chrome" -> pm.getLaunchIntentForPackage("com.android.chrome")
-                                "camera" -> pm.getLaunchIntentForPackage("com.android.camera")
-                                    ?: pm.getLaunchIntentForPackage("com.sec.android.app.camera")
-                                "settings" -> Intent(android.provider.Settings.ACTION_SETTINGS)
-                                "gallery", "photos" -> pm.getLaunchIntentForPackage("com.google.android.apps.photos")
-                                    ?: pm.getLaunchIntentForPackage("com.sec.android.gallery3d")
-                                "maps" -> pm.getLaunchIntentForPackage("com.google.android.apps.maps")
-                                "music", "spotify" -> pm.getLaunchIntentForPackage("com.spotify.music")
-                                "phone", "dialer" -> pm.getLaunchIntentForPackage("com.android.dialer")
-                                    ?: pm.getLaunchIntentForPackage("com.samsung.android.dialer")
-                                "contacts" -> pm.getLaunchIntentForPackage("com.android.contacts")
-                                    ?: pm.getLaunchIntentForPackage("com.samsung.android.contacts")
-                                "clock", "alarm" -> pm.getLaunchIntentForPackage("com.android.deskclock")
-                                    ?: pm.getLaunchIntentForPackage("com.sec.android.app.clockpackage")
-                                "calculator" -> pm.getLaunchIntentForPackage("com.android.calculator2")
-                                    ?: pm.getLaunchIntentForPackage("com.sec.android.app.popupcalculator")
-                                "files", "file manager" -> pm.getLaunchIntentForPackage("com.android.documentsui")
-                                    ?: pm.getLaunchIntentForPackage("com.sec.android.app.myfiles")
-                                "play store" -> pm.getLaunchIntentForPackage("com.android.vending")
-                                "twitter", "x" -> pm.getLaunchIntentForPackage("com.twitter.android")
-                                "tiktok" -> pm.getLaunchIntentForPackage("com.zhiliaoapp.musically")
-                                "snapchat" -> pm.getLaunchIntentForPackage("com.snapchat.android")
-                                else -> pm.getLaunchIntentForPackage(appName)
-                            }
-                            if (launchIntent != null) {
-                                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                startActivity(launchIntent)
-                                emitLog("JARVIS", "$appName opened.")
-                            } else {
-                                emitLog("JARVIS", "$appName not found.")
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Open app error: $appName", e)
-                            emitLog("JARVIS", "$appName open failed.")
-                        }
-                    }
-                }
-
-                "take_photo" -> {
-                    // Open camera app for photo
-                    try {
-                        val pm = packageManager
-                        val cameraIntent = pm.getLaunchIntentForPackage("com.android.camera")
-                            ?: pm.getLaunchIntentForPackage("com.sec.android.app.camera")
-                            ?: pm.getLaunchIntentForPackage("com.google.android.GoogleCamera")
-                            ?: Intent(MediaStore.ACTION_IMAGE_CAPTURE)
-                        cameraIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        startActivity(cameraIntent)
-                        emitLog("JARVIS", "Camera open korechi Boss. Photo tulen!")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Camera open failed", e)
-                        emitLog("JARVIS", "Camera open korte parlam na.")
-                    }
-                }
-
-                "set_clipboard" -> {
-                    val text = action.get("text")?.asString ?: ""
-                    if (text.isNotBlank()) {
-                        try {
-                            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                            val clip = android.content.ClipData.newPlainText("Jarvis", text)
-                            clipboard.setPrimaryClip(clip)
-                            emitLog("JARVIS", "Clipboard e copy korechi: ${text.take(50)}")
-                        } catch (e: Exception) {
-                            emitLog("JARVIS", "Clipboard e copy korte parlam na.")
-                        }
-                    }
-                }
-
-                "send_sms" -> {
-                    val phone = action.get("phone")?.asString ?: ""
-                    val text = action.get("text")?.asString ?: ""
-                    if (phone.isNotBlank() && text.isNotBlank()) {
-                        try {
-                            val smsManager = if (android.os.Build.VERSION.SDK_INT >= 31) {
-                                getSystemService(android.telephony.SmsManager::class.java)
-                            } else {
-                                @Suppress("DEPRECATION")
-                                android.telephony.SmsManager.getDefault()
-                            }
-                            val parts = smsManager.divideMessage(text)
-                            smsManager.sendMultipartTextMessage(phone, null, parts, null, null)
-                            emitLog("JARVIS", "SMS sent to $phone: $text")
-                        } catch (e: Exception) {
-                            Log.e(TAG, "SMS send failed", e)
-                            emitLog("JARVIS", "SMS send korte parlam na: ${e.message?.take(30)}")
-                        }
-                    }
-                }
-
-                "read_sms" -> {
-                    val count = action.get("count")?.asInt ?: 5
-                    try {
-                        val cursor = contentResolver.query(
-                            android.provider.Telephony.Sms.CONTENT_URI,
-                            arrayOf("address", "body", "date", "type"),
-                            null, null, "date DESC"
-                        )
-                        val messages = mutableListOf<String>()
-                        cursor?.use {
-                            var i = 0
-                            while (it.moveToNext() && i < count) {
-                                val addr = it.getString(0) ?: "Unknown"
-                                val body = it.getString(1) ?: ""
-                                val type = it.getInt(3)
-                                val dir = if (type == 1) "Received" else "Sent"
-                                messages.add("[$dir] $addr: $body")
-                                i++
-                            }
-                        }
-                        emitLog("JARVIS", if (messages.isEmpty()) "No SMS found." else "SMS:\n${messages.joinToString("\n")}")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Read SMS failed", e)
-                        emitLog("JARVIS", "SMS read korte parlam na. Permission den Settings e.")
-                    }
-                }
-
-                "read_contacts" -> {
-                    val query = action.get("query")?.asString ?: ""
-                    try {
-                        val uri = android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI
-                        val selection = if (query.isNotBlank()) {
-                            "${android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?"
-                        } else null
-                        val selArgs = if (query.isNotBlank()) arrayOf("%$query%") else null
-                        val cursor = contentResolver.query(
-                            uri,
-                            arrayOf(
-                                android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
-                                android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER
-                            ),
-                            selection, selArgs,
-                            "${android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} ASC"
-                        )
-                        val contacts = mutableListOf<String>()
-                        cursor?.use {
-                            var i = 0
-                            while (it.moveToNext() && i < 10) {
-                                val name = it.getString(0) ?: ""
-                                val number = it.getString(1) ?: ""
-                                contacts.add("$name: $number")
-                                i++
-                            }
-                        }
-                        emitLog("JARVIS", if (contacts.isEmpty()) "No contacts found." else "Contacts:\n${contacts.joinToString("\n")}")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Read contacts failed", e)
-                        emitLog("JARVIS", "Contacts read korte parlam na.")
-                    }
-                }
-
-                "make_call" -> {
-                    val phone = action.get("phone")?.asString ?: ""
-                    if (phone.isNotBlank()) {
-                        try {
-                            val callIntent = Intent(Intent.ACTION_CALL).apply {
-                                data = android.net.Uri.parse("tel:$phone")
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            }
-                            startActivity(callIntent)
-                            emitLog("JARVIS", "Calling $phone...")
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Call failed", e)
-                            emitLog("JARVIS", "Call korte parlam na. Permission den.")
-                        }
-                    }
-                }
-
-                "create_image" -> {
-                    val prompt = action.get("prompt")?.asString ?: ""
-                    emitLog("JARVIS", "Image concept: $prompt\nBoss, ekhon image generation feature ashche. Apni eita describe korechi.")
-                }
-
-                "music_control" -> {
-                    val command = action.get("command")?.asString ?: "play_pause"
-                    val keyCode = when (command.lowercase()) {
-                        "play", "pause", "play_pause" -> KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
-                        "next" -> KeyEvent.KEYCODE_MEDIA_NEXT
-                        "previous", "prev" -> KeyEvent.KEYCODE_MEDIA_PREVIOUS
-                        "stop" -> KeyEvent.KEYCODE_MEDIA_STOP
-                        else -> KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
-                    }
-                    sendMediaButton(keyCode)
-                    emitLog("JARVIS", "Music command: $command")
-                }
-
-                "set_volume" -> {
-                    val level = action.get("level")?.asInt
-                    val direction = action.get("direction")?.asString
-                    val am = audioManager
-                    if (am == null) {
-                        emitLog("JARVIS", "Audio manager unavailable")
-                    } else {
-                        if (level != null) {
-                            val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-                            val clamped = level.coerceIn(0, max)
-                            am.setStreamVolume(AudioManager.STREAM_MUSIC, clamped, AudioManager.FLAG_PLAY_SOUND)
-                            emitLog("JARVIS", "Volume set to $clamped/$max")
-                        } else if (!direction.isNullOrBlank()) {
-                            val dir = when (direction.lowercase()) {
-                                "up" -> AudioManager.ADJUST_RAISE
-                                "down" -> AudioManager.ADJUST_LOWER
-                                "mute" -> AudioManager.ADJUST_MUTE
-                                "unmute" -> AudioManager.ADJUST_UNMUTE
-                                else -> AudioManager.ADJUST_SAME
-                            }
-                            am.adjustVolume(dir, AudioManager.FLAG_PLAY_SOUND)
-                            emitLog("JARVIS", "Volume ${direction.lowercase()} command")
-                        }
-                    }
-                }
-
-                "set_brightness" -> {
-                    val level = action.get("level")?.asInt ?: return
-                    if (Settings.System.canWrite(this@LiveVoiceAgent)) {
-                        val clamped = level.coerceIn(0, 255)
-                        Settings.System.putInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS, clamped)
-                        emitLog("JARVIS", "Brightness set to $clamped")
-                    } else {
-                        emitLog("SYSTEM", "Brightness permission lagbe. Settings e giye 'Modify system settings' allow koren.")
-                    }
-                }
-
-                "toggle_flashlight" -> {
-                    val enable = action.get("enable")?.asBoolean ?: true
-                    val success = toggleTorch(enable)
-                    emitLog("JARVIS", if (success) "Flashlight ${if (enable) "ON" else "OFF"}" else "Flashlight toggle failed")
-                }
-
-                "lock_screen" -> {
-                    if (performGlobalActionSafe(AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN)) {
-                        emitLog("JARVIS", "Phone locked")
-                    } else {
-                        emitLog("JARVIS", "Lock korte parlam na. Accessibility on ache?" )
-                    }
-                }
-
-                "take_screenshot" -> {
-                    if (performGlobalActionSafe(AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)) {
-                        emitLog("JARVIS", "Screenshot neowa holo")
-                    } else {
-                        emitLog("JARVIS", "Screenshot nite parlam na.")
-                    }
-                }
-
-                "set_alarm" -> {
-                    val hour = action.get("hour")?.asInt ?: return
-                    val minute = action.get("minute")?.asInt ?: 0
-                    val message = action.get("message")?.asString ?: "Jarvis alarm"
-                    try {
-                        val intent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            putExtra(AlarmClock.EXTRA_HOUR, hour)
-                            putExtra(AlarmClock.EXTRA_MINUTES, minute)
-                            putExtra(AlarmClock.EXTRA_MESSAGE, message)
-                            putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-                        }
-                        startActivity(intent)
-                        emitLog("JARVIS", "Alarm set for $hour:$minute")
-                    } catch (e: Exception) {
-                        emitLog("JARVIS", "Alarm set korte parlam na: ${e.message}")
-                    }
-                }
-
-                "set_timer" -> {
-                    val seconds = action.get("seconds")?.asInt ?: return
-                    val message = action.get("message")?.asString ?: "Jarvis timer"
-                    try {
-                        val intent = Intent(AlarmClock.ACTION_SET_TIMER).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            putExtra(AlarmClock.EXTRA_LENGTH, seconds)
-                            putExtra(AlarmClock.EXTRA_MESSAGE, message)
-                            putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-                        }
-                        startActivity(intent)
-                        emitLog("JARVIS", "Timer set for ${seconds}s")
-                    } catch (e: Exception) {
-                        emitLog("JARVIS", "Timer set korte parlam na: ${e.message}")
-                    }
-                }
-
-                "add_calendar" -> {
-                    val title = action.get("title")?.asString ?: "Jarvis Event"
-                    val timestamp = action.get("timestamp")?.asLong ?: System.currentTimeMillis() + 60 * 60 * 1000
-                    val durationMinutes = action.get("duration_minutes")?.asInt ?: 30
-                    try {
-                        val values = ContentValues().apply {
-                            put(CalendarContract.Events.DTSTART, timestamp)
-                            put(CalendarContract.Events.DTEND, timestamp + durationMinutes * 60 * 1000)
-                            put(CalendarContract.Events.TITLE, title)
-                            put(CalendarContract.Events.CALENDAR_ID, 1)
-                            put(CalendarContract.Events.EVENT_TIMEZONE, TimeZone.getDefault().id)
-                        }
-                        val uri = contentResolver.insert(CalendarContract.Events.CONTENT_URI, values)
-                        emitLog("JARVIS", if (uri != null) "Calendar event added" else "Calendar event failed")
-                    } catch (e: Exception) {
-                        emitLog("JARVIS", "Calendar add error: ${e.message}")
-                    }
-                }
-
-                "get_location" -> {
-                    val location = getLastKnownLocation()
-                    if (location != null) {
-                        val geocoder = Geocoder(this@LiveVoiceAgent, Locale.getDefault())
-                        val address = try {
-                            geocoder.getFromLocation(location.latitude, location.longitude, 1)?.firstOrNull()
-                        } catch (_: Exception) { null }
-                        val city = address?.locality ?: address?.subAdminArea ?: "Unknown"
-                        emitLog("JARVIS", "Location: $city (${location.latitude}, ${location.longitude})")
-                    } else emitLog("JARVIS", "Location unavailable")
-                }
-
-                "get_weather" -> {
-                    scope.launch(Dispatchers.IO) {
-                        val city = action.get("city")?.asString
-                        val loc = getLastKnownLocation()
-                        val latitude = action.get("lat")?.asDouble ?: loc?.latitude ?: 23.8103
-                        val longitude = action.get("lon")?.asDouble ?: loc?.longitude ?: 90.4125
-                        try {
-                            val url = URL("https://api.open-meteo.com/v1/forecast?latitude=$latitude&longitude=$longitude&current_weather=true")
-                            val json = url.openStream().bufferedReader().use { it.readText() }
-                            val weather = JSONObject(json).getJSONObject("current_weather")
-                            val temp = weather.getDouble("temperature")
-                            val wind = weather.getDouble("windspeed")
-                            val code = weather.optInt("weathercode", -1)
-                            val description = WEATHER_CODES[code] ?: "Weather status"
-                            withContext(Dispatchers.Main) {
-                                emitLog("JARVIS", "Weather ${city ?: ""}: ${temp}°C, $description, wind ${wind} km/h")
-                            }
-                        } catch (e: Exception) {
-                            withContext(Dispatchers.Main) { emitLog("JARVIS", "Weather fetch failed: ${e.message}") }
-                        }
-                    }
-                }
-
-                "add_contact" -> {
-                    val name = action.get("name")?.asString ?: ""
-                    val phone = action.get("phone")?.asString ?: ""
-                    if (name.isBlank() || phone.isBlank()) return
-                    try {
-                        val values = ContentValues().apply {
-                            put(ContactsContract.RawContacts.ACCOUNT_TYPE, null as String?)
-                            put(ContactsContract.RawContacts.ACCOUNT_NAME, null as String?)
-                        }
-                        val rawUri = contentResolver.insert(ContactsContract.RawContacts.CONTENT_URI, values)
-                        val rawId = rawUri?.lastPathSegment?.toLongOrNull()
-                        if (rawId != null) {
-                            val dataValues = ContentValues().apply {
-                                put(ContactsContract.Data.RAW_CONTACT_ID, rawId)
-                                put(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE)
-                                put(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, name)
-                            }
-                            contentResolver.insert(ContactsContract.Data.CONTENT_URI, dataValues)
-
-                            val phoneValues = ContentValues().apply {
-                                put(ContactsContract.Data.RAW_CONTACT_ID, rawId)
-                                put(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE)
-                                put(ContactsContract.CommonDataKinds.Phone.NUMBER, phone)
-                                put(ContactsContract.CommonDataKinds.Phone.TYPE, ContactsContract.CommonDataKinds.Phone.TYPE_MOBILE)
-                            }
-                            contentResolver.insert(ContactsContract.Data.CONTENT_URI, phoneValues)
-                            emitLog("JARVIS", "Contact added: $name - $phone")
-                        } else emitLog("JARVIS", "Contact add failed")
-                    } catch (e: Exception) {
-                        emitLog("JARVIS", "Contact add error: ${e.message}")
-                    }
-                }
-
-                "toggle_wifi" -> {
-                    val enable = action.get("enable")?.asBoolean
-                    val success = if (enable != null) {
-                        setWifiEnabled(enable)
-                    } else false
-                    if (success) {
-                        emitLog("JARVIS", "Wi-Fi ${if (enable == true) "ON" else "OFF"}")
-                    } else {
-                        try {
-                            val intent = Intent(Panel.ACTION_WIFI).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
-                            startActivity(intent)
-                            emitLog("JARVIS", "Wi-Fi panel khule dilam Boss")
-                        } catch (e: Exception) {
-                            emitLog("JARVIS", "Wi-Fi toggle korte parlam na")
-                        }
-                    }
-                }
-
-                "toggle_bluetooth" -> {
-                    val enable = action.get("enable")?.asBoolean
-                    val success = if (enable != null) setBluetoothEnabled(enable) else false
-                    if (success) {
-                        emitLog("JARVIS", "Bluetooth ${if (enable == true) "ON" else "OFF"}")
-                    } else {
-                        try {
-                            val intent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
-                            startActivity(intent)
-                            emitLog("JARVIS", "Bluetooth panel khule dilam Boss")
-                        } catch (e: Exception) {
-                            emitLog("JARVIS", "Bluetooth toggle korte parlam na")
-                        }
-                    }
-                }
-
-                "toggle_night_mode" -> {
-                    val enable = action.get("enable")?.asBoolean ?: true
-                    val mode = if (enable) androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES else androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO
-                    androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(mode)
-                    emitLog("JARVIS", "Night mode ${if (enable) "ON" else "OFF"}")
-                }
-
-                "wifi_info" -> {
-                    val info = wifiManager?.connectionInfo
-                    if (info != null) {
-                        val ssid = info.ssid?.trim('"') ?: "Unknown"
-                        val ip = android.text.format.Formatter.formatIpAddress(info.ipAddress)
-                        val speed = info.linkSpeed
-                        emitLog("JARVIS", "Wi-Fi: SSID=$ssid, IP=$ip, Speed=$speed Mbps")
-                    } else emitLog("JARVIS", "Wi-Fi info unavailable")
-                }
-
-                "list_apps" -> {
-                    val pm = packageManager
-                    val apps = pm.getInstalledApplications(0)
-                        .sortedBy { it.loadLabel(pm).toString().lowercase() }
-                        .take(20)
-                        .joinToString("\n") { it.loadLabel(pm).toString() }
-                    emitLog("JARVIS", "Installed apps:\n$apps")
-                }
-
-                "kill_app" -> {
-                    if (!developerModeOrWarn()) return
-                    val packageName = action.get("package")?.asString ?: return
-                    try {
-                        Runtime.getRuntime().exec(arrayOf("sh", "-c", "am force-stop $packageName"))
-                        emitLog("JARVIS", "$packageName force-stop diyechi")
-                    } catch (e: Exception) {
-                        emitLog("JARVIS", "Force-stop failed: ${e.message}")
-                    }
-                }
-
-                "reboot_phone" -> {
-                    if (!developerModeOrWarn()) return
-                    try {
-                        Runtime.getRuntime().exec(arrayOf("su", "-c", "reboot"))
-                        emitLog("JARVIS", "Reboot command pathano holo")
-                    } catch (e: Exception) {
-                        emitLog("JARVIS", "Reboot korte root lagbe: ${e.message}")
-                    }
-                }
-
-                "record_audio" -> {
-                    val state = action.get("state")?.asString ?: "start"
-                    scope.launch {
-                        val result = if (state.equals("stop", true)) stopAudioRecording() else startAudioRecording()
-                        emitLog("JARVIS", "Recorder: $result")
-                        if (state.equals("stop", true)) safeSpeak("Recording saved") else speakFireAndForget("Recording cholche")
-                    }
-                }
-
-                "set_reminder" -> {
-                    val text = action.get("text")?.asString ?: return
-                    val minutes = action.get("minutes")?.asInt ?: 1
-                    val task = "Reminder: $text"
-                    scheduleAlarmTask(task, minutes * 60 * 1000L)
-                    emitLog("JARVIS", "Reminder schedule: $text in $minutes minutes")
-                }
-
-                "find_phone" -> {
-                    playPhoneFinderTone()
-                    scope.launch {
-                        emitLog("JARVIS", "Phone finder ON (30s)")
-                        delay(30_000)
-                        stopPhoneFinderTone()
-                    }
-                }
-
-                "speed_test" -> {
-                    scope.launch(Dispatchers.IO) {
-                        try {
-                            val start = System.currentTimeMillis()
-                            val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", "ping -c 1 8.8.8.8"))
-                            val exit = process.waitFor()
-                            val time = System.currentTimeMillis() - start
-                            val log = process.inputStream.bufferedReader().readText()
-                            withContext(Dispatchers.Main) {
-                                emitLog("JARVIS", if (exit == 0) "Ping ${time}ms\n$log" else "Ping failed")
-                            }
-                        } catch (e: Exception) {
-                            withContext(Dispatchers.Main) {
-                                emitLog("JARVIS", "Speed test failed: ${e.message}")
-                            }
-                        }
-                    }
-                }
-
-                "search_files" -> {
-                    val query = action.get("query")?.asString ?: return
-                    scope.launch(Dispatchers.IO) {
-                        try {
-                            val projection = arrayOf(MediaStore.Files.FileColumns.DISPLAY_NAME, MediaStore.Files.FileColumns.DATA)
-                            val cursor = contentResolver.query(
-                                MediaStore.Files.getContentUri("external"),
-                                projection,
-                                "${MediaStore.Files.FileColumns.DISPLAY_NAME} LIKE ?",
-                                arrayOf("%$query%"),
-                                MediaStore.Files.FileColumns.DATE_ADDED + " DESC"
-                            )
-                            val results = mutableListOf<String>()
-                            cursor?.use {
-                                var i = 0
-                                while (it.moveToNext() && i < 10) {
-                                    results.add(it.getString(0) + "\n" + it.getString(1))
-                                    i++
-                                }
-                            }
-                            withContext(Dispatchers.Main) {
-                                emitLog("JARVIS", if (results.isEmpty()) "File pailam na" else results.joinToString("\n\n"))
-                            }
-                        } catch (e: Exception) {
-                            withContext(Dispatchers.Main) {
-                                emitLog("JARVIS", "File search failed: ${e.message}")
-                            }
-                        }
-                    }
-                }
-
-                "clean_cache" -> {
-                    if (!developerModeOrWarn()) return
-                    scope.launch(Dispatchers.IO) {
-                        try {
-                            Runtime.getRuntime().exec(arrayOf("sh", "-c", "pm trim-caches 1000G")).waitFor()
-                            withContext(Dispatchers.Main) { emitLog("JARVIS", "Cache clean command pathano") }
-                        } catch (e: Exception) {
-                            withContext(Dispatchers.Main) { emitLog("JARVIS", "Cache clean failed: ${e.message}") }
-                        }
-                    }
-                }
-
-                "video_mode" -> {
-                    try {
-                        val intent = Intent(MediaStore.ACTION_VIDEO_CAPTURE).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
-                        startActivity(intent)
-                        emitLog("JARVIS", "Video recorder open")
-                    } catch (e: Exception) {
-                        emitLog("JARVIS", "Video mode fail: ${e.message}")
-                    }
-                }
-
-                "dev_shell" -> {
-                    if (!developerModeOrWarn()) return
-                    val command = action.get("command")?.asString ?: return
-                    scope.launch(Dispatchers.IO) {
-                        try {
-                            val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", command))
-                            val output = process.inputStream.bufferedReader().readText()
-                            val error = process.errorStream.bufferedReader().readText()
-                            withContext(Dispatchers.Main) {
-                                emitLog("DEV", "$command\n${(output + error).take(2000)}")
-                            }
-                        } catch (e: Exception) {
-                            withContext(Dispatchers.Main) { emitLog("DEV", "Failed: ${e.message}") }
-                        }
-                    }
-                }
-
-                "run_shell" -> {
-                    val command = action.get("command")?.asString ?: ""
-                    if (command.isNotBlank()) {
-                        try {
-                            val process = withContext(Dispatchers.IO) {
-                                Runtime.getRuntime().exec(arrayOf("sh", "-c", command))
-                            }
-                            val output = withContext(Dispatchers.IO) {
-                                process.inputStream.bufferedReader().readText().take(2000)
-                            }
-                            val error = withContext(Dispatchers.IO) {
-                                process.errorStream.bufferedReader().readText().take(500)
-                            }
-                            val exitCode = withContext(Dispatchers.IO) { process.waitFor() }
-                            val result = if (output.isNotBlank()) output else error
-                            emitLog("SHELL", "$ $command\n${result}\n[exit: $exitCode]")
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Shell exec failed", e)
-                            emitLog("SHELL", "Failed: ${e.message}")
-                        }
-                    }
-                }
-
-                "run_root" -> {
-                    if (!developerModeOrWarn()) return
-                    val command = action.get("command")?.asString ?: ""
-                    if (command.isNotBlank()) {
-                        try {
-                            val process = withContext(Dispatchers.IO) {
-                                Runtime.getRuntime().exec(arrayOf("su", "-c", command))
-                            }
-                            val output = withContext(Dispatchers.IO) {
-                                process.inputStream.bufferedReader().readText().take(2000)
-                            }
-                            val error = withContext(Dispatchers.IO) {
-                                process.errorStream.bufferedReader().readText().take(500)
-                            }
-                            val exitCode = withContext(Dispatchers.IO) { process.waitFor() }
-                            val result = if (output.isNotBlank()) output else error
-                            emitLog("ROOT", "# $command\n${result}\n[exit: $exitCode]")
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Root exec failed", e)
-                            emitLog("ROOT", "Root access failed: ${e.message}")
-                        }
-                    }
-                }
-
-                "run_termux" -> {
-                    val command = action.get("command")?.asString ?: ""
-                    if (command.isNotBlank()) {
-                        try {
-                            // Send command to Termux via RUN_COMMAND intent
-                            val termuxIntent = Intent("com.termux.RUN_COMMAND").apply {
-                                setClassName("com.termux", "com.termux.app.RunCommandService")
-                                putExtra("com.termux.RUN_COMMAND_PATH", "/data/data/com.termux/files/usr/bin/bash")
-                                putExtra("com.termux.RUN_COMMAND_ARGUMENTS", arrayOf("-c", command))
-                                putExtra("com.termux.RUN_COMMAND_BACKGROUND", true)
-                            }
-                            startService(termuxIntent)
-                            emitLog("TERMUX", "Sent to Termux: $command")
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Termux exec failed", e)
-                            // Fallback to direct shell
-                            try {
-                                val process = withContext(Dispatchers.IO) {
-                                    Runtime.getRuntime().exec(arrayOf("sh", "-c", command))
-                                }
-                                val output = withContext(Dispatchers.IO) {
-                                    process.inputStream.bufferedReader().readText().take(2000)
-                                }
-                                emitLog("SHELL", "$ $command\n$output")
-                            } catch (e2: Exception) {
-                                emitLog("SHELL", "Failed: ${e2.message}")
-                            }
-                        }
-                    }
-                }
-
-                "edit_file" -> {
-                    if (!developerModeOrWarn()) return
-                    val path = action.get("path")?.asString ?: ""
-                    val content = action.get("content")?.asString ?: ""
-                    if (path.isNotBlank() && content.isNotBlank()) {
-                        try {
-                            withContext(Dispatchers.IO) {
-                                java.io.File(path).writeText(content)
-                            }
-                            emitLog("JARVIS", "File written: $path")
-                        } catch (e: Exception) {
-                            // Try with root
-                            try {
-                                val escaped = content.replace("'", "'\\''")
-                                withContext(Dispatchers.IO) {
-                                    Runtime.getRuntime().exec(arrayOf("su", "-c", "echo '$escaped' > $path")).waitFor()
-                                }
-                                emitLog("JARVIS", "File written (root): $path")
-                            } catch (e2: Exception) {
-                                emitLog("JARVIS", "File write failed: ${e2.message}")
-                            }
-                        }
-                    }
-                }
-
-                "read_file" -> {
-                    val path = action.get("path")?.asString ?: ""
-                    if (path.isNotBlank()) {
-                        try {
-                            val content = withContext(Dispatchers.IO) {
-                                java.io.File(path).readText().take(3000)
-                            }
-                            emitLog("FILE", "$path:\n$content")
-                        } catch (e: Exception) {
-                            emitLog("FILE", "Read failed: ${e.message}")
-                        }
-                    }
-                }
-
-                "save_fact" -> {
-                    val key = action.get("key")?.asString ?: ""
-                    val value = action.get("value")?.asString ?: ""
-                    if (key.isNotBlank() && value.isNotBlank()) {
-                        try {
-                            memoryDb?.saveFact(key, value)
-                            emitLog("MEMORY", "Remembered: $key = $value")
-                            Log.i(TAG, "Saved fact: $key = $value")
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Save fact failed", e)
-                        }
-                    }
-                }
-
-                "schedule_task" -> {
-                    val task = action.get("task")?.asString ?: ""
-                    val delayMinutes = action.get("delay_minutes")?.asInt ?: 0
-                    if (task.isNotBlank() && delayMinutes > 0) {
-                        scheduleAlarmTask(task, delayMinutes * 60 * 1000L)
-                        emitLog("JARVIS", "Scheduled task '$task' in $delayMinutes min")
-                    }
-                }
-
-                "export_chat" -> {
-                    scope.launch {
-                        val result = exportConversation()
-                        safeSpeak(result)
-                    }
-                }
-
-                else -> Log.d(TAG, "Unknown action: $type")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Action execution error: $type", e)
-            emitLog("SYSTEM", "Action '$type' failed.")
-        }
-    }
-
-    // ------------------------------------------------------------------ //
-    //  STT — CONTINUOUS LISTEN (FIXED: no cooldown, instant restart)       //
-    // ------------------------------------------------------------------ //
-
-    /** Track consecutive errors to avoid tight spin loops */
-    private var consecutiveSttErrors = 0
-    
-    /** Track last successful listen time for adaptive delays */
-    private var lastSuccessfulListenTime = 0L
-    
-    /** Track if we're in a continuous listening session */
-    private var isInActiveConversation = false
-    
-    /** Track last notification update time to throttle UI updates */
-    private var lastNotificationUpdateTime = 0L
-
-    /**
-     * MAIN FIX for "voice ekbar nile ar ney na":
-     *
-     * Problem: Android SpeechRecognizer has an internal cooldown after
-     * ERROR_NO_MATCH(7) and ERROR_SPEECH_TIMEOUT(6). After one use it
-     * waits 30s-2min before accepting startListening() again.
-     *
-     * Solution:
-     * 1. Create FRESH SpeechRecognizer EVERY time (destroy old one first)
-     * 2. Request AUDIO FOCUS before starting (ensures mic is free)
-     * 3. Add ADAPTIVE delay (100ms-2s) based on success/error rate
-     * 4. Use language from settings (not hardcoded)
-     * 5. Configure silence timeouts based on voice sensitivity setting
-     * 6. Track conversation state for faster response in active sessions
-     * 7. Implement exponential backoff on repeated errors
-     */
-    private suspend fun safeListenForSpeech(): String {
-        return try {
-            withTimeout(STT_TIMEOUT_MS) {
-                // ADAPTIVE DELAY: Faster in active conversations, slower on errors
-                val delayMs = calculateAdaptiveDelay()
-                if (delayMs > 0) {
-                    delay(delayMs)
-                }
-
-                val result = listenForSpeechOnce()
-                if (result.isNotBlank()) {
-                    consecutiveSttErrors = 0  // Reset on success
-                    lastSuccessfulListenTime = System.currentTimeMillis()
-                    isInActiveConversation = true
-                }
-                result
-            }
-        } catch (e: TimeoutCancellationException) {
-            Log.d(TAG, "STT timeout — no speech")
-            consecutiveSttErrors++
-            isInActiveConversation = false
-            ""
-        } catch (e: Exception) {
-            Log.e(TAG, "STT error — recovering", e)
-            consecutiveSttErrors++
-            isInActiveConversation = false
-            delay(1000)
-            ""
-        }
-    }
-    
-    /**
-     * Calculate adaptive delay between listen cycles.
-     * Faster response when in active conversation, slower on errors.
-     */
-    private fun calculateAdaptiveDelay(): Long {
-        // If we're in an active conversation (last success < 30s ago), use minimal delay
-        val timeSinceLastSuccess = System.currentTimeMillis() - lastSuccessfulListenTime
-        
-        // Reset conversation state if window expired
-        if (timeSinceLastSuccess >= ACTIVE_CONVERSATION_WINDOW_MS) {
-            isInActiveConversation = false
-        }
-        
-        if (isInActiveConversation && timeSinceLastSuccess < ACTIVE_CONVERSATION_WINDOW_MS) {
-            return MIN_RESTART_DELAY_MS
-        }
-        
-        // Exponential backoff on consecutive errors (prevents tight error loops)
-        return when {
-            consecutiveSttErrors >= 5 -> MAX_RESTART_DELAY_MS      // Many errors: 2s cooldown
-            consecutiveSttErrors >= 3 -> 1000L                     // Some errors: 1s cooldown
-            consecutiveSttErrors > 0 -> 500L                       // Few errors: 0.5s cooldown
-            else -> 200L                                            // No errors: quick restart
-        }
-    }
-
-    /**
-     * One-shot speech recognition with a FRESH SpeechRecognizer.
-     * Requests audio focus, uses language from settings, proper sensitivity.
-     */
-    private suspend fun listenForSpeechOnce(): String = withContext(Dispatchers.Main) {
-        if (!SpeechRecognizer.isRecognitionAvailable(this@LiveVoiceAgent)) {
-            Log.e(TAG, "Speech recognition not available on this device")
-            return@withContext ""
-        }
-
-        // Request audio focus to ensure mic is available
-        requestAudioFocus()
-
-        suspendCancellableCoroutine { cont ->
-            var recognizer: SpeechRecognizer? = null
-            var hasResumed = false  // Prevent double resume
-
-            fun safeResume(text: String) {
-                if (!hasResumed && cont.isActive) {
-                    hasResumed = true
-                    try { recognizer?.destroy() } catch (_: Exception) {}
-                    recognizer = null
-                    abandonAudioFocus()
-                    cont.resume(text, null)
-                }
-            }
-
-            try {
-                recognizer = SpeechRecognizer.createSpeechRecognizer(this@LiveVoiceAgent)
-
-                // Get language from settings
-                val sttLang = prefManager.sttLanguage
-
-                // Get silence timeouts from voice sensitivity
-                val (possibleSilence, completeSilence) = when (prefManager.voiceSensitivity) {
-                    0 -> 6000L to 8000L    // Low: long silence allowed (more accurate, slower)
-                    1 -> 4000L to 6000L    // Normal: balanced
-                    2 -> 2500L to 3500L    // High: shorter silence = faster response
-                    3 -> 1500L to 2500L    // Max Focus: very quick response
-                    else -> 3000L to 5000L
-                }
-
-                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, sttLang)
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, sttLang)
-                    putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, sttLang)
-                    putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true) // Get partial results for faster feedback
-                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)  // Get top 3 results for better accuracy
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, possibleSilence)
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, completeSilence)
-                    // Prefer offline recognition if available (faster, more reliable)
-                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-                    // Enable beamforming for better noise cancellation (if device supports)
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-                        putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, android.media.MediaRecorder.AudioSource.VOICE_RECOGNITION)
-                    }
-                }
-
-                recognizer!!.setRecognitionListener(object : RecognitionListener {
-                    override fun onResults(results: Bundle?) {
-                        val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                            ?.firstOrNull() ?: ""
-                        Log.d(TAG, "STT result: '$text'")
-                        safeResume(text)
-                    }
-
-                    override fun onError(error: Int) {
-                        val errorName = when (error) {
-                            SpeechRecognizer.ERROR_AUDIO -> "AUDIO"
-                            SpeechRecognizer.ERROR_CLIENT -> "CLIENT"
-                            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "PERMISSIONS"
-                            SpeechRecognizer.ERROR_NETWORK -> "NETWORK"
-                            SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "NETWORK_TIMEOUT"
-                            SpeechRecognizer.ERROR_NO_MATCH -> "NO_MATCH"
-                            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "BUSY"
-                            SpeechRecognizer.ERROR_SERVER -> "SERVER"
-                            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "SPEECH_TIMEOUT"
-                            else -> "UNKNOWN($error)"
-                        }
-                        
-                        // Don't count NO_MATCH and TIMEOUT as real errors (they're expected)
-                        if (error != SpeechRecognizer.ERROR_NO_MATCH && 
-                            error != SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
-                            Log.w(TAG, "STT error: $errorName")
-                            consecutiveSttErrors++
-                        } else {
-                            Log.d(TAG, "STT: $errorName (expected, not counted as error)")
-                        }
-                        safeResume("")
-                    }
-
-                    override fun onReadyForSpeech(params: Bundle?) {
-                        Log.d(TAG, "STT ready — mic active, listening...")
-                    }
-                    override fun onBeginningOfSpeech() {
-                        Log.d(TAG, "STT: speech started")
-                    }
-                    override fun onRmsChanged(rmsdB: Float) {}
-                    override fun onBufferReceived(buffer: ByteArray?) {}
-                    override fun onEndOfSpeech() {
-                        Log.d(TAG, "STT: speech ended, processing...")
-                    }
-                    override fun onPartialResults(partial: Bundle?) {
-                        // Show partial results for immediate feedback (throttled to prevent battery drain)
-                        val text = partial?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                            ?.firstOrNull() ?: ""
-                        if (text.isNotBlank() && text.length > MIN_PARTIAL_TEXT_LENGTH) {
-                            Log.d(TAG, "STT partial: '$text'")
-                            
-                            // Throttle notification updates to every 300ms
-                            val now = System.currentTimeMillis()
-                            if (now - lastNotificationUpdateTime > NOTIFICATION_UPDATE_THROTTLE_MS) {
-                                updateNotification("Hearing: ${text.take(MAX_PARTIAL_TEXT_DISPLAY_LENGTH)}...")
-                                lastNotificationUpdateTime = now
-                            }
-                        }
-                    }
-                    override fun onEvent(eventType: Int, params: Bundle?) {}
-                })
-
-                recognizer!!.startListening(intent)
-                Log.d(TAG, "STT startListening called (lang=$sttLang)")
-
-            } catch (e: Exception) {
-                Log.e(TAG, "STT create/start failed", e)
-                safeResume("")
-            }
-
-            cont.invokeOnCancellation {
-                try {
-                    recognizer?.stopListening()
-                    recognizer?.destroy()
-                } catch (_: Exception) {}
-                abandonAudioFocus()
-            }
-        }
-    }
-
-    // ------------------------------------------------------------------ //
-    //  Audio Focus — ensures mic is available for STT                      //
-    // ------------------------------------------------------------------ //
-
-    private var audioFocusRequest: AudioFocusRequest? = null
-    private var hasAudioFocus = false
-
-    private fun requestAudioFocus() {
-        try {
-            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
-                    .setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_ASSISTANT)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                            .build()
-                    )
-                    .setAcceptsDelayedFocusGain(true)
-                    .setOnAudioFocusChangeListener { focusChange ->
-                        when (focusChange) {
-                            AudioManager.AUDIOFOCUS_GAIN -> {
-                                hasAudioFocus = true
-                                Log.d(TAG, "Audio focus gained")
-                            }
-                            AudioManager.AUDIOFOCUS_LOSS,
-                            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                                hasAudioFocus = false
-                                Log.d(TAG, "Audio focus lost")
-                            }
-                        }
-                    }
-                    .build()
-                val result = am.requestAudioFocus(req)
-                hasAudioFocus = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-                audioFocusRequest = req
-                Log.d(TAG, "Audio focus request result: $result")
-            } else {
-                @Suppress("DEPRECATION")
-                val result = am.requestAudioFocus(
-                    { focusChange ->
-                        hasAudioFocus = focusChange == AudioManager.AUDIOFOCUS_GAIN
-                    }, 
-                    AudioManager.STREAM_MUSIC, 
-                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE
-                )
-                hasAudioFocus = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Audio focus request failed", e)
-            hasAudioFocus = false
-        }
-    }
-
-    private fun abandonAudioFocus() {
-        try {
-            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                audioFocusRequest?.let { 
-                    am.abandonAudioFocusRequest(it)
-                    Log.d(TAG, "Audio focus abandoned")
-                }
-            } else {
-                @Suppress("DEPRECATION")
-                am.abandonAudioFocus {}
-            }
-            hasAudioFocus = false
-        } catch (e: Exception) {
-            Log.w(TAG, "Audio focus abandon failed", e)
-        }
-    }
-
-    // ------------------------------------------------------------------ //
-    //  TTS — SAFE SPEAK (with timeout, never hangs)                       //
-    // ------------------------------------------------------------------ //
-
-    /**
-     * Speaks text with a hard timeout. If TTS hangs or fails,
-     * the loop continues after timeout. NEVER blocks forever.
-     */
-    private suspend fun safeSpeak(text: String) {
-        if (text.isBlank()) return
-        _agentState.value = AgentState.SPEAKING
-
-        try {
-            withTimeout(TTS_TIMEOUT_MS) {
-                speakAndWait(text)
-            }
-        } catch (e: TimeoutCancellationException) {
-            Log.w(TAG, "TTS timeout after ${TTS_TIMEOUT_MS}ms — moving on")
-            // Stop any stuck audio
-            cartesiaWsManager?.cancelCurrentGeneration()
-            cartesiaClient?.stop()
-            androidTts?.stop()
-        } catch (e: Exception) {
-            Log.e(TAG, "TTS error — recovering", e)
-        }
-    }
-
-    private suspend fun speakAndWait(text: String) {
-        val ttsProvider = prefManager.selectedTtsProvider
-
-        when (ttsProvider) {
-            TtsProvider.CARTESIA -> speakWithCartesia(text)
-            TtsProvider.SPEECHIFY -> speakWithAndroidTtsFallback(text)
-            TtsProvider.ANDROID_TTS -> speakWithAndroidTtsFallback(text)
-        }
-    }
-
-    private suspend fun speakWithCartesia(text: String) {
-        // Try WebSocket
-        val wsManager = cartesiaWsManager
-        if (wsManager != null && prefManager.useCartesiaWebSocket) {
-            try {
-                return suspendCancellableCoroutine { cont ->
-                    ioScope.launch {
-                        try {
-                            wsManager.speak(text) {
-                                if (cont.isActive) cont.resume(Unit, null)
-                            }
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Cartesia WS speak error", e)
-                            if (cont.isActive) cont.resume(Unit, null)
-                        }
-                    }
-                    cont.invokeOnCancellation {
-                        wsManager.cancelCurrentGeneration()
-                    }
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Cartesia WS failed", e)
-            }
-        }
-
-        // Try HTTP
-        val httpClient = cartesiaClient
-        if (httpClient != null) {
-            try {
-                val result = withContext(Dispatchers.IO) { httpClient.speak(text) }
-                if (result.isSuccess) return
-                Log.w(TAG, "Cartesia HTTP failed")
-            } catch (e: Exception) {
-                Log.w(TAG, "Cartesia HTTP error", e)
-            }
-        }
-
-        // Android TTS fallback
-        speakWithAndroidTtsFallback(text)
-    }
-
-    private suspend fun speakWithAndroidTtsFallback(text: String) {
-        if (!androidTtsReady) {
-            Log.e(TAG, "Android TTS not ready")
-            return
-        }
-
-        return suspendCancellableCoroutine { cont ->
-            val utteranceId = "j_${System.currentTimeMillis()}"
-            applyEmotionalVoicePreset()
-
-            androidTts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(id: String?) {}
-                override fun onDone(id: String?) {
-                    if (cont.isActive) cont.resume(Unit, null)
-                }
-                @Deprecated("Deprecated")
-                override fun onError(id: String?) {
-                    if (cont.isActive) cont.resume(Unit, null)
-                }
-                override fun onError(id: String?, errorCode: Int) {
-                    if (cont.isActive) cont.resume(Unit, null)
-                }
-            })
-
-            val chunks = text.chunked(3900)
-            chunks.forEachIndexed { index, chunk ->
-                val mode = if (index == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
-                val id = if (index == chunks.lastIndex) utteranceId else "${utteranceId}_$index"
-                androidTts?.speak(chunk, mode, null, id)
-            }
-
-            cont.invokeOnCancellation { androidTts?.stop() }
-        }
-    }
-
-    // ------------------------------------------------------------------ //
-    //  TTS Language Setup                                                 //
-    // ------------------------------------------------------------------ //
-
-    private fun setTtsLanguage() {
-        val langCode = prefManager.ttsLanguage
-        val parts = langCode.split("-")
-        val locale = if (parts.size >= 2) Locale(parts[0], parts[1]) else Locale(langCode)
-        val result = androidTts?.setLanguage(locale)
-        if (result == TextToSpeech.LANG_NOT_SUPPORTED || result == TextToSpeech.LANG_MISSING_DATA) {
-            Log.w(TAG, "TTS language $langCode not supported, using default")
-            androidTts?.language = Locale.getDefault()
-        } else {
-            Log.i(TAG, "TTS language set to $langCode")
-        }
-    }
-
-    private fun applyEmotionalVoicePreset() {
-        val preset = prefManager.emotionalVoicePreset
-        val (pitch, rate) = when (preset) {
-            1 -> 0.9f to 0.8f   // Sad
-            2 -> 1.1f to 1.2f   // Happy
-            3 -> 0.95f to 0.9f  // Romantic
-            4 -> 1.2f to 1.0f   // Angry
-            5 -> 1.0f to 1.0f   // Echo handled by audio effect (not available) -> default
-            else -> 1.0f to 1.0f
-        }
-        try {
-            androidTts?.setPitch(pitch)
-            androidTts?.setSpeechRate(rate)
-        } catch (_: Exception) {}
-    }
-
-    // ------------------------------------------------------------------ //
-    //  HELPERS                                                            //
-    // ------------------------------------------------------------------ //
-
-    private suspend fun emitLog(sender: String, text: String) {
-        try {
-            val time = timeFormat.format(Date())
-            conversationLog.emit(ConversationEntry(sender, text, time))
-        } catch (_: Exception) {}
-    }
-
-    @Suppress("DEPRECATION")
-    private fun acquireWakeLock() {
-        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKELOCK_TAG).apply {
-            acquire(4 * 60 * 60 * 1000L)
-        }
-    }
-
-    private fun releaseWakeLock() {
-        wakeLock?.let { if (it.isHeld) it.release() }
-        wakeLock = null
-    }
-
-    private fun sendMediaButton(keyCode: Int) {
-        try {
-            val eventTime = System.currentTimeMillis()
-            val downEvent = KeyEvent(eventTime, eventTime, KeyEvent.ACTION_DOWN, keyCode, 0)
-            val upEvent = KeyEvent(eventTime, eventTime, KeyEvent.ACTION_UP, keyCode, 0)
-            audioManager?.dispatchMediaKeyEvent(downEvent)
-            audioManager?.dispatchMediaKeyEvent(upEvent)
-        } catch (e: Exception) {
-            Log.e(TAG, "Media button failed", e)
-        }
-    }
-
-    private fun getStorageDir(name: String): File {
-        val base = if (prefManager.memoryStorage == "external") {
-            getExternalFilesDir(null)
-        } else {
-            filesDir
-        } ?: filesDir
-        val dir = File(base, name)
-        if (!dir.exists()) dir.mkdirs()
-        return dir
-    }
-
-    private fun developerModeOrWarn(): Boolean {
-        return if (prefManager.developerModeEnabled) {
-            true
-        } else {
-            scope.launch { emitLog("SYSTEM", "Developer mode off. Settings e enable koren.") }
-            false
-        }
-    }
-
-    private fun toggleTorch(enable: Boolean): Boolean {
-        return try {
-            val camId = cameraManager?.cameraIdList?.firstOrNull { id ->
-                try {
-                    cameraManager?.getCameraCharacteristics(id)?.get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
-                } catch (_: Exception) { false }
-            } ?: return false
-            cameraManager?.setTorchMode(camId, enable)
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "Torch toggle failed", e)
-            false
-        }
-    }
-
-    private fun setWifiEnabled(enable: Boolean): Boolean {
-        return try {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-                wifiManager?.isWifiEnabled = enable
-                true
-            } else {
-                val cmd = "svc wifi ${if (enable) "enable" else "disable"}"
-                val exit = Runtime.getRuntime().exec(arrayOf("su", "-c", cmd)).waitFor()
-                exit == 0
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Wifi toggle failed", e)
-            false
-        }
-    }
-
-    private fun setBluetoothEnabled(enable: Boolean): Boolean {
-        return try {
-            val adapter = BluetoothAdapter.getDefaultAdapter() ?: return false
-            if (enable) adapter.enable() else adapter.disable()
-        } catch (e: Exception) {
-            Log.e(TAG, "Bluetooth toggle failed", e)
-            false
-        }
-    }
-
-    private fun performGlobalActionSafe(action: Int): Boolean {
-        return try {
-            val service = JarvisAccessibilityService.instance
-            service?.performGlobalAction(action) == true
-        } catch (e: Exception) {
-            Log.e(TAG, "Global action failed", e)
-            false
-        }
-    }
-
-    private suspend fun startAudioRecording(): String {
-        if (isRecordingAudio) return recorderFile?.absolutePath ?: "Already recording"
-        return withContext(Dispatchers.IO) {
-            try {
-                val dir = getStorageDir("recordings")
-                val file = File(dir, "jarvis_record_${System.currentTimeMillis()}.m4a")
-                val recorder = MediaRecorder()
-                recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
-                recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                recorder.setAudioEncodingBitRate(128000)
-                recorder.setAudioSamplingRate(44100)
-                recorder.setOutputFile(file.absolutePath)
-                recorder.prepare()
-                recorder.start()
-                mediaRecorder = recorder
-                recorderFile = file
-                isRecordingAudio = true
-                file.absolutePath
-            } catch (e: Exception) {
-                Log.e(TAG, "Recording start failed", e)
-                "Recording failed: ${e.message}"
-            }
-        }
-    }
-
-    private suspend fun stopAudioRecording(): String {
-        return withContext(Dispatchers.IO) {
-            try {
-                mediaRecorder?.stop()
-                mediaRecorder?.reset()
-                mediaRecorder?.release()
-            } catch (_: Exception) {}
-            mediaRecorder = null
-            isRecordingAudio = false
-            recorderFile?.absolutePath ?: "No recording"
-        }
-    }
-
-    private fun playPhoneFinderTone() {
-        try {
-            if (phoneFinderPlayer == null) {
-                phoneFinderPlayer = MediaPlayer.create(this, android.provider.Settings.System.DEFAULT_ALARM_ALERT_URI)
-                phoneFinderPlayer?.isLooping = true
-            }
-            phoneFinderPlayer?.setVolume(1f, 1f)
-            phoneFinderPlayer?.start()
-        } catch (e: Exception) {
-            Log.e(TAG, "Phone finder failed", e)
-        }
-    }
-
-    private fun stopPhoneFinderTone() {
-        try {
-            phoneFinderPlayer?.stop()
-            phoneFinderPlayer?.release()
-        } catch (_: Exception) {}
-        phoneFinderPlayer = null
-    }
-
-    private fun getLastKnownLocation(): android.location.Location? {
-        return try {
-            val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
-            val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
-            providers.mapNotNull { provider ->
-                try { lm.getLastKnownLocation(provider) } catch (_: SecurityException) { null }
-            }.maxByOrNull { it.time }
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    private fun scheduleAlarmTask(task: String, delayMillis: Long) {
-        try {
-            val alarmManager = getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
-            val triggerAt = System.currentTimeMillis() + delayMillis
-            val intent = Intent(this, ScheduledTaskReceiver::class.java).apply {
-                putExtra(ScheduledTaskReceiver.EXTRA_TASK, task)
-            }
-            val requestCode = (task + triggerAt).hashCode()
-            val pendingIntent = PendingIntent.getBroadcast(
-                this,
-                requestCode,
-                intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
-            val timeText = SimpleDateFormat("MMM dd HH:mm", Locale.getDefault()).format(Date(triggerAt))
-            scope.launch { emitLog("JARVIS", "Scheduled task at $timeText: $task") }
-        } catch (e: Exception) {
-            Log.e(TAG, "scheduleAlarmTask failed", e)
-            scope.launch { emitLog("JARVIS", "Schedule failed: ${e.message}") }
-        }
-    }
-
-    fun handleScheduledTask(task: String) {
-        scope.launch {
-            emitLog("JARVIS", "Executing scheduled task: $task")
-            val response = try {
-                askLlm(task)
-            } catch (e: Exception) {
-                Log.e(TAG, "Scheduled task failed", e)
-                "Scheduled task failed: ${e.message}"
-            }
-            emitLog("JARVIS", response)
-            safeSpeak("Boss, scheduled task done. $response")
-        }
-    }
+    // ================================================================
+    // NOTIFICATION
+    // ================================================================
 
     private fun createNotification(text: String): Notification {
         val launchIntent = Intent(this, MainActivity::class.java)
@@ -2289,7 +589,7 @@ class LiveVoiceAgent : Service() {
         )
 
         return NotificationCompat.Builder(this, JarvisApplication.CHANNEL_VOICE_SERVICE)
-            .setContentTitle("Jarvis AI Active")
+            .setContentTitle("Maya AI Active")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentIntent(pendingIntent)
@@ -2303,12 +603,8 @@ class LiveVoiceAgent : Service() {
         try {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
             nm.notify(NOTIFICATION_ID, createNotification(text))
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            Log.w(TAG, "Notification update failed", e)
+        }
     }
-
-    data class ConversationEntry(
-        val sender: String,
-        val text: String,
-        val time: String
-    )
 }
