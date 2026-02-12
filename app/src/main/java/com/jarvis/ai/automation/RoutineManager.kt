@@ -20,7 +20,6 @@ class RoutineManager(private val context: Context) {
     
     private val appController = AppController(context)
     private val fileController = FileController(context)
-    private val dndManager = DoNotDisturbManager(context)
     private val prefManager = PreferenceManager(context)
     
     /**
@@ -38,7 +37,7 @@ class RoutineManager(private val context: Context) {
             
             // Step 1: Turn off DND
             result.addStep("Turning off DND")
-            dndManager.setDoNotDisturb(android.app.NotificationManager.INTERRUPTION_FILTER_ALL)
+            DoNotDisturbManager.setDoNotDisturb(context, android.app.NotificationManager.INTERRUPTION_FILTER_ALL)
             delay(500)
             
             // Step 2: Open news app
@@ -75,7 +74,7 @@ class RoutineManager(private val context: Context) {
             
             // Step 1: Enable DND
             result.addStep("Enabling DND")
-            dndManager.setDoNotDisturb(android.app.NotificationManager.INTERRUPTION_FILTER_PRIORITY)
+            DoNotDisturbManager.setDoNotDisturb(context, android.app.NotificationManager.INTERRUPTION_FILTER_PRIORITY)
             delay(500)
             
             // Step 2: Close unnecessary apps
@@ -118,7 +117,7 @@ class RoutineManager(private val context: Context) {
             
             // Step 1: Enable DND (priority only)
             result.addStep("Enabling DND (priority)")
-            dndManager.setDoNotDisturb(android.app.NotificationManager.INTERRUPTION_FILTER_PRIORITY)
+            DoNotDisturbManager.setDoNotDisturb(context, android.app.NotificationManager.INTERRUPTION_FILTER_PRIORITY)
             delay(500)
             
             // Step 2: Open music app
@@ -154,7 +153,7 @@ class RoutineManager(private val context: Context) {
             
             // Step 1: Enable DND (alarms only)
             result.addStep("Enabling DND (alarms only)")
-            dndManager.setDoNotDisturb(android.app.NotificationManager.INTERRUPTION_FILTER_ALARMS)
+            DoNotDisturbManager.setDoNotDisturb(context, android.app.NotificationManager.INTERRUPTION_FILTER_ALARMS)
             delay(500)
             
             // Step 2: Close distracting apps
@@ -192,7 +191,7 @@ class RoutineManager(private val context: Context) {
             
             // Step 1: Enable DND (priority only)
             result.addStep("Enabling DND (priority)")
-            dndManager.setDoNotDisturb(android.app.NotificationManager.INTERRUPTION_FILTER_PRIORITY)
+            DoNotDisturbManager.setDoNotDisturb(context, android.app.NotificationManager.INTERRUPTION_FILTER_PRIORITY)
             delay(500)
             
             // Step 2: Open maps
