@@ -6,12 +6,15 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.graphics.Bitmap
 import android.util.Base64
+import android.widget.Toast
 import java.io.ByteArrayOutputStream
 import com.jarvis.ai.JarvisApplication
 import com.jarvis.ai.accessibility.JarvisAccessibilityService
@@ -862,76 +865,66 @@ Keep responses SHORT and FRIENDLY. Mix Bangla and English naturally.
      */
     private suspend fun safeSpeak(text: String) {
         if (text.isBlank()) return
-        
+
         try {
             withTimeout(25_000L) {
-                // Use Cartesia if enabled, otherwise Android TTS
-                if (prefManager.selectedTtsProvider == TtsProvider.CARTESIA) {
-                    var cartesiaSuccess = false
-                    
-                    // Try Cartesia WebSocket first
-                    val wsManager = cartesiaWsManager
-                    if (wsManager != null) {
+                var cartesiaSuccess = false
+
+                // Try Cartesia WebSocket first
+                val wsManager = cartesiaWsManager
+                if (wsManager != null) {
+                    try {
+                        wsManager.speak(text, onComplete = null)
+                        cartesiaSuccess = true
+                        Log.i(TAG, "Spoke via Cartesia WebSocket")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Cartesia WS failed", e)
+                    }
+                }
+
+                // Try Cartesia HTTP if WS failed
+                if (!cartesiaSuccess) {
+                    val httpClient = cartesiaClient
+                    if (httpClient != null) {
                         try {
-                            wsManager.speak(text, onComplete = null)
-                            cartesiaSuccess = true
-                            Log.i(TAG, "Spoke via Cartesia WebSocket")
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Cartesia WS failed", e)
-                        }
-                    }
-                    
-                    // Try Cartesia HTTP if WS failed
-                    if (!cartesiaSuccess) {
-                        val httpClient = cartesiaClient
-                        if (httpClient != null) {
-                            try {
-                                val result = httpClient.speak(text)
-                                if (result.isSuccess) {
-                                    cartesiaSuccess = true
-                                    Log.i(TAG, "Spoke via Cartesia HTTP")
-                                }
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Cartesia HTTP failed", e)
+                            val result = httpClient.speak(text)
+                            if (result.isSuccess) {
+                                cartesiaSuccess = true
+                                Log.i(TAG, "Spoke via Cartesia HTTP")
                             }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Cartesia HTTP failed", e)
                         }
                     }
-                    
-                    // Fallback to Android TTS only if Cartesia failed
-                    if (!cartesiaSuccess) {
-                        Log.i(TAG, "Cartesia failed, using Android TTS")
-                        // speakWithAndroidTts(text) // DISABLED - Boss orders: Cartesia ONLY
-                        Log.w(TAG, "Android TTS path blocked - Cartesia required")
-                    }
-                } else {
-                    // Android TTS selected
-                    speakWithAndroidTts(text)
+                }
+
+                // If Cartesia failed, remain silent and notify
+                if (!cartesiaSuccess) {
+                    Log.w(TAG, "Cartesia failed - remaining silent per Boss directive")
+                    showToast("Cartesia unavailable. Please check network/API key.")
                 }
             }
         } catch (e: TimeoutCancellationException) {
             Log.w(TAG, "TTS timeout")
-            // androidTts?.stop() // REMOVED
             cartesiaWsManager?.cancelCurrentGeneration()
         } catch (e: Exception) {
             Log.e(TAG, "TTS error", e)
         }
     }
 
-    private suspend fun speakWithAndroidTts(text: String) {
-        // FUNCTION DISABLED - Boss orders: Cartesia TTS ONLY
-        // If Cartesia fails, remain SILENT - no system TTS fallback
-        Log.w(TAG, "speakWithAndroidTts() called but DISABLED per Boss directive")
-    }
-
     /**
      * Speaks text WITHOUT waiting (fire-and-forget)
      */
     private fun speakFireAndForget(text: String) {
-        try {
-                // androidTts?.speak() DISABLED - Boss orders: Cartesia ONLY
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Fire-and-forget speak failed", e)
+        if (text.isBlank()) return
+        scope.launch {
+            safeSpeak(text)
+        }
+    }
+
+    private fun showToast(message: String) {
+        Handler(Looper.getMainLooper()).post {
+            Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
         }
     }
 

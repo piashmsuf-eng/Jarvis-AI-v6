@@ -231,20 +231,17 @@ class VoiceEngine(
         if (client != null) {
             val result = client.speak(text)
             result.onFailure { e ->
-                Log.e(TAG, "Cartesia HTTP TTS also failed, using Android TTS", e)
-                speakWithAndroidTts(text)
+                Log.e(TAG, "Cartesia HTTP TTS also failed - remaining silent", e)
             }
             return
         }
 
-        Log.w(TAG, "No Cartesia client configured, falling back to Android TTS")
-        speakWithAndroidTts(text)
+        Log.w(TAG, "No Cartesia client configured - remaining silent per Boss directive")
     }
 
     private suspend fun speakWithSpeechify(text: String) {
-        // Speechify integration placeholder — similar to Cartesia
-        Log.w(TAG, "Speechify not yet fully implemented, using Android TTS")
-        speakWithAndroidTts(text)
+        // Speechify integration placeholder — disabled by Boss directive
+        Log.w(TAG, "Speechify not implemented. Cartesia ONLY - remaining silent")
     }
 
     private fun speakWithAndroidTts(text: String) {
