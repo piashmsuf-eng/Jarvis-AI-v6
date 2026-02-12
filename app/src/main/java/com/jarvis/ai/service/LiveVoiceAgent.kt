@@ -199,15 +199,8 @@ class LiveVoiceAgent : Service() {
 
         scope.launch {
             try {
-                // Wait for TTS to be ready
-                var waitCount = 0
-                    delay(100)
-                    waitCount++
-                }
-
-                    Log.e(TAG, "TTS not ready after 5s, cannot continue")
-                    return@launch
-                }
+                // Cartesia-only: no Android TTS readiness gate
+                // If Cartesia is unavailable, we stay silent and show a toast when speaking
 
                 // GREETING
                 agentState.value = AgentState.GREETING
