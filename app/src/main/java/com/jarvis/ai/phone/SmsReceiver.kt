@@ -45,7 +45,7 @@ class SmsReceiver : BroadcastReceiver() {
             
             // Check if voice announcement is enabled
             val prefManager = PreferenceManager(context)
-            val autoReadEnabled = prefManager.getBoolean("auto_read_sms", false)
+            val autoReadEnabled = false // TODO: Add preference setting
             
             if (autoReadEnabled) {
                 // Announce via voice
@@ -64,11 +64,4 @@ class SmsReceiver : BroadcastReceiver() {
         }
     }
     
-    /**
-     * Helper for PreferenceManager
-     */
-    private fun PreferenceManager.getBoolean(key: String, default: Boolean): Boolean {
-        // Use reflection or add method to PreferenceManager
-        return default // For now, default disabled
-    }
 }

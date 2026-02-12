@@ -66,7 +66,7 @@ class PhoneStateReceiver : BroadcastReceiver() {
             
             // Check if voice announcement is enabled
             val prefManager = PreferenceManager(context)
-            val autoAnnounceEnabled = prefManager.getBoolean("auto_announce_calls", false)
+            val autoAnnounceEnabled = false // TODO: Add preference setting
             
             if (autoAnnounceEnabled) {
                 // Announce via voice
@@ -91,11 +91,4 @@ class PhoneStateReceiver : BroadcastReceiver() {
         // Can add logic here if needed
     }
     
-    /**
-     * Helper for PreferenceManager
-     */
-    private fun PreferenceManager.getBoolean(key: String, default: Boolean): Boolean {
-        // Use reflection or add method to PreferenceManager
-        return default // For now, default disabled
-    }
 }

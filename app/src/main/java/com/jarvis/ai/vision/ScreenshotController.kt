@@ -38,31 +38,9 @@ class ScreenshotController(private val context: Context) {
                 )
             }
             
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                // Use accessibility service screenshot (API 28+)
-                val result = a11y.takeScreenshot(
-                    JarvisAccessibilityService.TAKE_SCREENSHOT_FULL_DISPLAY,
-                    android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R,
-                    { executor, callback -> executor.execute { callback.run() } },
-                    object : android.accessibilityservice.AccessibilityService.TakeScreenshotCallback {
-                        override fun onSuccess(screenshot: android.accessibilityservice.AccessibilityService.ScreenshotResult) {
-                            Log.i(TAG, "Screenshot taken successfully")
-                        }
-                        
-                        override fun onFailure(errorCode: Int) {
-                            Log.w(TAG, "Screenshot failed: $errorCode")
-                        }
-                    }
-                )
-                
-                return ScreenshotResult(
-                    success = result,
-                    message = if (result) "Screenshot taken" else "Screenshot failed"
-                )
-            } else {
-                // Fall back to root method
-                return takeScreenshotViaRoot()
-            }
+            // For now, use root method
+            // Accessibility screenshot API requires complex async handling
+            return takeScreenshotViaRoot()
         } catch (e: Exception) {
             Log.e(TAG, "Error taking screenshot", e)
             return ScreenshotResult(
