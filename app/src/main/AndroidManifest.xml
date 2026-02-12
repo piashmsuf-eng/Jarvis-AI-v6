@@ -261,5 +261,30 @@
             android:name=".service.ScheduledTaskReceiver"
             android:exported="false" />
 
+        <!-- ====================================================== -->
+        <!--  SMS RECEIVER (incoming SMS announcements)             -->
+        <!-- ====================================================== -->
+        <receiver
+            android:name=".phone.SmsReceiver"
+            android:exported="true"
+            android:enabled="true">
+            <intent-filter android:priority="999">
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- ====================================================== -->
+        <!--  PHONE STATE RECEIVER (incoming call announcements)    -->
+        <!-- ====================================================== -->
+        <receiver
+            android:name=".phone.PhoneStateReceiver"
+            android:exported="true"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="android.intent.action.PHONE_STATE" />
+                <action android:name="android.intent.action.NEW_OUTGOING_CALL" />
+            </intent-filter>
+        </receiver>
+
     </application>
 </manifest>

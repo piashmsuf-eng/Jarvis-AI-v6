@@ -8,6 +8,8 @@ import com.jarvis.ai.accessibility.JarvisAccessibilityService
 import com.jarvis.ai.language.BengaliCommandParser
 import com.jarvis.ai.language.LanguageDetector
 import com.jarvis.ai.network.client.LlmClient
+import com.jarvis.ai.phone.CallController
+import com.jarvis.ai.phone.SmsController
 import com.jarvis.ai.network.model.ChatMessage
 import com.jarvis.ai.ui.web.WebViewActivity
 import com.jarvis.ai.util.DeviceInfoProvider
@@ -41,6 +43,10 @@ class JarvisBrain(
 
     /** Conversation history maintained across turns. */
     private val conversationHistory = mutableListOf<ChatMessage>()
+    
+    /** Phone controllers */
+    private val smsController = SmsController(context)
+    private val callController = CallController(context)
 
     /** Callback for UI updates. */
     var onResponseCallback: ((String) -> Unit)? = null
@@ -303,6 +309,115 @@ class JarvisBrain(
                 } else {
                     voiceEngine.speak("I need a URL to open.")
                 }
+            }
+
+            // ── SMS Actions ──────────────────────────────────────────────
+            "read_sms" -> {
+                val count = action.get("count")?.asInt ?: 5
+                val messages = smsController.getRecentSms(count, SmsController.SmsType.INBOX)
+                val formatted = smsController.formatForVoice(messages)
+                voiceEngine.speak(formatted)
+                onResponseCallback?.invoke(formatted)
+            }
+
+            "send_sms" -> {
+                val recipient = action.get("recipient")?.asString ?: ""
+                val message = action.get("message")?.asString ?: ""
+                
+                if (recipient.isNotBlank() && message.isNotBlank()) {
+                    // Try by name first, then by number
+                    val success = if (recipient.matches(Regex("\\d+"))) {
+                        smsController.sendSms(recipient, message)
+                    } else {
+                        smsController.sendSmsByName(recipient, message)
+                    }
+                    
+                    val response = if (success) {
+                        "SMS sent to $recipient: $message"
+                    } else {
+                        "Failed to send SMS to $recipient"
+                    }
+                    voiceEngine.speak(response)
+                    onResponseCallback?.invoke(response)
+                } else {
+                    voiceEngine.speak("I need a recipient and message to send SMS.")
+                }
+            }
+
+            "sms_from_contact" -> {
+                val contactName = action.get("contact")?.asString ?: ""
+                val count = action.get("count")?.asInt ?: 5
+                
+                if (contactName.isNotBlank()) {
+                    val messages = smsController.getSmsFromContact(contactName, count)
+                    val formatted = smsController.formatForVoice(messages)
+                    voiceEngine.speak(formatted)
+                    onResponseCallback?.invoke(formatted)
+                } else {
+                    voiceEngine.speak("I need a contact name.")
+                }
+            }
+
+            // ── Call Actions ─────────────────────────────────────────────
+            "make_call" -> {
+                val recipient = action.get("recipient")?.asString ?: ""
+                
+                if (recipient.isNotBlank()) {
+                    val success = if (recipient.matches(Regex("\\d+"))) {
+                        callController.makeCall(recipient)
+                    } else {
+                        callController.makeCallByName(recipient)
+                    }
+                    
+                    val response = if (success) {
+                        "Calling $recipient"
+                    } else {
+                        "Failed to call $recipient"
+                    }
+                    voiceEngine.speak(response)
+                    onResponseCallback?.invoke(response)
+                } else {
+                    voiceEngine.speak("I need a contact name or number to call.")
+                }
+            }
+
+            "end_call" -> {
+                val success = callController.endCall()
+                val response = if (success) {
+                    "Call ended"
+                } else {
+                    "Could not end call. This requires Android 9+ and permission."
+                }
+                voiceEngine.speak(response)
+                onResponseCallback?.invoke(response)
+            }
+
+            "call_history" -> {
+                val count = action.get("count")?.asInt ?: 5
+                val typeStr = action.get("type")?.asString
+                
+                val type = when (typeStr) {
+                    "missed" -> CallController.CallType.MISSED
+                    "incoming" -> CallController.CallType.INCOMING
+                    "outgoing" -> CallController.CallType.OUTGOING
+                    else -> null
+                }
+                
+                val calls = callController.getCallHistory(count, type)
+                val formatted = callController.formatForVoice(calls)
+                voiceEngine.speak(formatted)
+                onResponseCallback?.invoke(formatted)
+            }
+
+            "missed_calls" -> {
+                val count = callController.getMissedCallsCount()
+                val response = if (count > 0) {
+                    "You have $count missed calls"
+                } else {
+                    "No missed calls"
+                }
+                voiceEngine.speak(response)
+                onResponseCallback?.invoke(response)
             }
 
             else -> {
