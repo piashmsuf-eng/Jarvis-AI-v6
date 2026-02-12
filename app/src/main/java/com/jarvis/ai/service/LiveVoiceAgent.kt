@@ -46,7 +46,7 @@ class LiveVoiceAgent : Service() {
         const val EXTRA_SCHEDULED_TASK = "extra_scheduled_task"
 
         enum class AgentState {
-            INACTIVE, GREETING, LISTENING, THINKING, SPEAKING, EXECUTING
+            INACTIVE, GREETING, LISTENING, THINKING, SPEAKING, EXECUTING, PAUSED
         }
 
         @Volatile
@@ -177,7 +177,7 @@ class LiveVoiceAgent : Service() {
                         val response = withContext(Dispatchers.IO) { askLlm(typedText) }
                         emitLog("MAYA", response)
                         agentState.value = AgentState.SPEAKING
-                        speak(response)
+                        safeSpeak(response)
                     } catch (e: Exception) {
                         Log.e(TAG, "Text input error", e)
                     }
@@ -674,7 +674,7 @@ Keep responses SHORT and FRIENDLY. Mix Bangla and English naturally.
                 emitLog("SYSTEM", "Scheduled task: $task")
                 val response = askLlm(task)
                 emitLog("MAYA", response)
-                speak(response)
+                safeSpeak(response)
             } catch (e: Exception) {
                 Log.e(TAG, "Scheduled task failed", e)
             }
