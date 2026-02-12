@@ -13,11 +13,15 @@ import android.view.animation.OvershootInterpolator
 import android.widget.TextView
 import android.widget.ImageView
 import android.widget.ProgressBar
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.animation.doOnEnd
+import androidx.lifecycle.lifecycleScope
 import com.jarvis.ai.R
+import com.jarvis.ai.root.ShellExecutor
 import com.jarvis.ai.ui.main.MainActivity
 import java.util.Locale
+import kotlinx.coroutines.launch
 
 class SplashActivity : AppCompatActivity() {
 
@@ -27,6 +31,14 @@ class SplashActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_splash)
         // TTS initialization REMOVED - Boss mandates Cartesia ONLY
+
+        // Request root access on first launch (Boss requirement)
+        lifecycleScope.launch {
+            val granted = ShellExecutor.requestRootAccess()
+            if (!granted) {
+                Toast.makeText(this@SplashActivity, "Root access denied", Toast.LENGTH_SHORT).show()
+            }
+        }
 
         val tvJarvis = findViewById<TextView>(R.id.tvSplashTitle)
         val tvModby = findViewById<TextView>(R.id.tvSplashModby)
