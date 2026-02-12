@@ -26,8 +26,8 @@ android {
         applicationId = "com.jarvis.ai"
         minSdk = 28          // Android 9+ (Accessibility gestures require API 24+, screenshots API 30+)
         targetSdk = 34
-        versionCode = 7
-        versionName = "6.1.0"
+        versionCode = 8
+        versionName = "6.2.0"
 
         // Inject secrets from local.properties into BuildConfig
         buildConfigField(

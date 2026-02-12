@@ -92,12 +92,7 @@
         <package android:name="com.google.android.youtube" />
         <package android:name="com.android.chrome" />
         <package android:name="com.google.android.apps.photos" />
-        <package android:name="com.google.android.apps.maps" />
         <package android:name="com.spotify.music" />
-        <package android:name="com.twitter.android" />
-        <package android:name="com.zhiliaoapp.musically" />
-        <package android:name="com.snapchat.android" />
-        <package android:name="com.android.vending" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
         </intent>

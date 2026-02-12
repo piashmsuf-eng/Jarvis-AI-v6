@@ -17,7 +17,10 @@ import androidx.core.app.NotificationCompat
 import com.jarvis.ai.JarvisApplication
 import com.jarvis.ai.accessibility.JarvisAccessibilityService
 import com.jarvis.ai.network.client.LlmClient
+import com.jarvis.ai.network.client.CartesiaTtsClient
+import com.jarvis.ai.network.client.CartesiaWebSocketManager
 import com.jarvis.ai.network.model.ChatMessage
+import com.jarvis.ai.network.model.TtsProvider
 import com.jarvis.ai.ui.main.MainActivity
 import com.jarvis.ai.ui.web.WebViewActivity
 import com.jarvis.ai.util.PreferenceManager
@@ -81,6 +84,8 @@ class LiveVoiceAgent : Service() {
     private var llmClient: LlmClient? = null
     private var androidTts: TextToSpeech? = null
     private var androidTtsReady = false
+    private var cartesiaWsManager: CartesiaWebSocketManager? = null
+    private var cartesiaClient: CartesiaTtsClient? = null
     private val conversationHistory = mutableListOf<ChatMessage>()
 
     @Volatile
@@ -160,6 +165,17 @@ class LiveVoiceAgent : Service() {
             } else {
                 Log.e(TAG, "TTS initialization failed")
             }
+        }
+
+        // Initialize Cartesia TTS
+        val cartesiaKey = prefManager.cartesiaApiKey
+        if (cartesiaKey.isNotBlank()) {
+            cartesiaClient = CartesiaTtsClient(apiKey = cartesiaKey, voiceId = prefManager.cartesiaVoiceId.ifBlank { "bd9120b6-7761-47a6-a446-77ca49132781" })
+            if (prefManager.useCartesiaWebSocket) {
+                cartesiaWsManager = CartesiaWebSocketManager(apiKey = cartesiaKey, voiceId = prefManager.cartesiaVoiceId.ifBlank { "bd9120b6-7761-47a6-a446-77ca49132781" })
+                cartesiaWsManager?.connect()
+            }
+            Log.i(TAG, "Cartesia TTS initialized")
         }
     }
 
@@ -437,6 +453,139 @@ Keep responses SHORT and FRIENDLY. Mix Bangla and English naturally.
                     createRevidVideo(script)
                 }
 
+                "send_sms" -> {
+                    val phone = action["phone"] ?: return
+                    val text = action["text"] ?: return
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            val smsManager = if (android.os.Build.VERSION.SDK_INT >= 31) {
+                                getSystemService(android.telephony.SmsManager::class.java)
+                            } else {
+                                @Suppress("DEPRECATION") android.telephony.SmsManager.getDefault()
+                            }
+                            smsManager.sendTextMessage(phone, null, text, null, null)
+                            withContext(Dispatchers.Main) { emitLog("MAYA", "SMS sent to $phone") }
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) { emitLog("MAYA", "SMS failed: ${e.message}") }
+                        }
+                    }
+                }
+
+                "read_sms" -> {
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            val cursor = contentResolver.query(
+                                android.provider.Telephony.Sms.CONTENT_URI,
+                                arrayOf("address", "body", "date"),
+                                null, null, "date DESC"
+                            )
+                            val messages = mutableListOf<String>()
+                            cursor?.use {
+                                var i = 0
+                                while (it.moveToNext() && i < 5) {
+                                    messages.add("${it.getString(0)}: ${it.getString(1)}")
+                                    i++
+                                }
+                            }
+                            withContext(Dispatchers.Main) {
+                                emitLog("SMS", messages.joinToString("\n"))
+                            }
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) { emitLog("MAYA", "SMS read failed") }
+                        }
+                    }
+                }
+
+                "send_message" -> {
+                    val text = action["text"] ?: return
+                    val a11y = JarvisAccessibilityService.instance
+                    if (a11y != null) {
+                        scope.launch(Dispatchers.IO) {
+                            val success = a11y.sendMessage(text)
+                            withContext(Dispatchers.Main) {
+                                emitLog("MAYA", if (success) "Message sent" else "Send failed")
+                            }
+                        }
+                    }
+                }
+
+                "click" -> {
+                    val target = action["target"] ?: return
+                    JarvisAccessibilityService.instance?.clickNodeByText(target)
+                }
+
+                "type" -> {
+                    val text = action["text"] ?: return
+                    JarvisAccessibilityService.instance?.typeText(text)
+                }
+
+                "run_shell" -> {
+                    val command = action["command"] ?: return
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", command))
+                            val output = process.inputStream.bufferedReader().readText()
+                            withContext(Dispatchers.Main) { emitLog("SHELL", output.take(500)) }
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) { emitLog("SHELL", "Failed: ${e.message}") }
+                        }
+                    }
+                }
+
+                "run_root" -> {
+                    if (!prefManager.developerModeEnabled) {
+                        scope.launch { emitLog("MAYA", "Developer mode OFF. Settings e enable koren.") }
+                        return
+                    }
+                    val command = action["command"] ?: return
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", command))
+                            val output = process.inputStream.bufferedReader().readText()
+                            withContext(Dispatchers.Main) { emitLog("ROOT", output.take(500)) }
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) { emitLog("ROOT", "Failed: ${e.message}") }
+                        }
+                    }
+                }
+
+                "music_control" -> {
+                    val cmd = action["command"] ?: "play_pause"
+                    val keyCode = when (cmd.lowercase()) {
+                        "play", "pause", "play_pause" -> android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+                        "next" -> android.view.KeyEvent.KEYCODE_MEDIA_NEXT
+                        "previous", "prev" -> android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS
+                        else -> android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+                    }
+                    val am = getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+                    val eventTime = System.currentTimeMillis()
+                    am?.dispatchMediaKeyEvent(android.view.KeyEvent(eventTime, eventTime, android.view.KeyEvent.ACTION_DOWN, keyCode, 0))
+                    am?.dispatchMediaKeyEvent(android.view.KeyEvent(eventTime, eventTime, android.view.KeyEvent.ACTION_UP, keyCode, 0))
+                }
+
+                "set_volume" -> {
+                    val direction = action["direction"] ?: "up"
+                    val am = getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+                    val dir = when (direction.lowercase()) {
+                        "up" -> android.media.AudioManager.ADJUST_RAISE
+                        "down" -> android.media.AudioManager.ADJUST_LOWER
+                        "mute" -> android.media.AudioManager.ADJUST_MUTE
+                        else -> android.media.AudioManager.ADJUST_SAME
+                    }
+                    am?.adjustVolume(dir, android.media.AudioManager.FLAG_PLAY_SOUND)
+                }
+
+                "toggle_flashlight" -> {
+                    val enable = action["enable"] != "false"
+                    try {
+                        val cm = getSystemService(Context.CAMERA_SERVICE) as? android.hardware.camera2.CameraManager
+                        val camId = cm?.cameraIdList?.firstOrNull() ?: "0"
+                        cm?.setTorchMode(camId, enable)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Flashlight failed", e)
+                    }
+                }
+
                 else -> Log.d(TAG, "Unknown action: $type")
             }
         } catch (e: Exception) {
@@ -627,24 +776,52 @@ Keep responses SHORT and FRIENDLY. Mix Bangla and English naturally.
      */
     private suspend fun safeSpeak(text: String) {
         if (text.isBlank()) return
-        if (!androidTtsReady) {
-            Log.e(TAG, "TTS not ready")
-            return
-        }
-
+        
         try {
             withTimeout(25_000L) {
-                speakAndWait(text)
+                // Try Cartesia WebSocket first
+                val wsManager = cartesiaWsManager
+                if (wsManager != null && prefManager.selectedTtsProvider == TtsProvider.CARTESIA) {
+                    try {
+                        return@withTimeout suspendCoroutine { cont ->
+                            wsManager.speak(text) {
+                                if (cont.isActive) cont.resume(Unit)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Cartesia WS failed", e)
+                    }
+                }
+                
+                // Try Cartesia HTTP
+                val httpClient = cartesiaClient
+                if (httpClient != null && prefManager.selectedTtsProvider == TtsProvider.CARTESIA) {
+                    try {
+                        val result = httpClient.speak(text)
+                        if (result.isSuccess) return@withTimeout
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Cartesia HTTP failed", e)
+                    }
+                }
+                
+                // Fallback to Android TTS
+                speakWithAndroidTts(text)
             }
         } catch (e: TimeoutCancellationException) {
-            Log.w(TAG, "TTS timeout - moving on")
+            Log.w(TAG, "TTS timeout")
             androidTts?.stop()
+            cartesiaWsManager?.cancelCurrentGeneration()
         } catch (e: Exception) {
             Log.e(TAG, "TTS error", e)
         }
     }
 
-    private suspend fun speakAndWait(text: String) {
+    private suspend fun speakWithAndroidTts(text: String) {
+        if (!androidTtsReady) {
+            Log.e(TAG, "Android TTS not ready")
+            return
+        }
+        
         suspendCoroutine { cont ->
             val utteranceId = "maya_${System.currentTimeMillis()}"
 
