@@ -790,7 +790,6 @@ Keep responses SHORT and FRIENDLY. Mix Bangla and English naturally.
                         Log.w(TAG, "Cartesia WS failed", e)
                     }
                 }
-                }
                 
                 // Try Cartesia HTTP
                 val httpClient = cartesiaClient
