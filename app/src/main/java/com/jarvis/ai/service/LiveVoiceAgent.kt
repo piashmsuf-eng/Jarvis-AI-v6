@@ -900,7 +900,8 @@ Keep responses SHORT and FRIENDLY. Mix Bangla and English naturally.
                     // Fallback to Android TTS only if Cartesia failed
                     if (!cartesiaSuccess) {
                         Log.i(TAG, "Cartesia failed, using Android TTS")
-                        speakWithAndroidTts(text)
+                        // speakWithAndroidTts(text) // DISABLED - Boss orders: Cartesia ONLY
+                        Log.w(TAG, "Android TTS path blocked - Cartesia required")
                     }
                 } else {
                     // Android TTS selected
