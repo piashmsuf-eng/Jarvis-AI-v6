@@ -223,6 +223,34 @@
             android:layout_marginBottom="24dp"
             android:fontFamily="monospace" />
 
+        <!-- Revid.ai Video -->
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Revid.ai API Key (video generation)"
+            android:layout_marginBottom="8dp"
+            app:hintTextColor="#888888"
+            app:endIconMode="password_toggle"
+            app:boxStrokeColor="#9C27B0">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etRevidKey"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:inputType="textPassword" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Get free key: revidapi.com/dashboard\nCreate videos from text! Say: 'Maya, video banao...'"
+            android:textColor="#9C27B0"
+            android:textSize="11sp"
+            android:layout_marginBottom="24dp"
+            android:fontFamily="monospace" />
+
         <!-- Section: TTS -->
         <TextView
             android:layout_width="match_parent"

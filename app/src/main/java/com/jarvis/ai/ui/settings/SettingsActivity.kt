@@ -275,6 +275,7 @@ class SettingsActivity : AppCompatActivity() {
         binding.etClaudeKey.setText(prefManager.claudeApiKey)
         binding.etGroqKey.setText(prefManager.groqApiKey)
         binding.etFreedomGptKey.setText(prefManager.freedomGptApiKey)
+        binding.etRevidKey.setText(prefManager.revidApiKey)
 
         // TTS Keys
         binding.etCartesiaKey.setText(prefManager.cartesiaApiKey)
@@ -638,6 +639,7 @@ class SettingsActivity : AppCompatActivity() {
         prefManager.claudeApiKey = binding.etClaudeKey.text.toString().trim()
         prefManager.groqApiKey = binding.etGroqKey.text.toString().trim()
         prefManager.freedomGptApiKey = binding.etFreedomGptKey.text.toString().trim()
+        prefManager.revidApiKey = binding.etRevidKey.text.toString().trim()
 
         // TTS Keys
         prefManager.cartesiaApiKey = binding.etCartesiaKey.text.toString().trim()

@@ -384,11 +384,15 @@ Keep responses SHORT and FRIENDLY. Mix Bangla and English naturally.
             val actionMatch = """"action"\s*:\s*"([^"]+)"""".toRegex().find(jsonText)
             val appMatch = """"app"\s*:\s*"([^"]+)"""".toRegex().find(jsonText)
             val queryMatch = """"query"\s*:\s*"([^"]+)"""".toRegex().find(jsonText)
+            val scriptMatch = """"script"\s*:\s*"([^"]+)"""".toRegex().find(jsonText)
+            val textMatch = """"text"\s*:\s*"([^"]+)"""".toRegex().find(jsonText)
             
             val result = mutableMapOf<String, String>()
             actionMatch?.groupValues?.get(1)?.let { result["action"] = it }
             appMatch?.groupValues?.get(1)?.let { result["app"] = it }
             queryMatch?.groupValues?.get(1)?.let { result["query"] = it }
+            scriptMatch?.groupValues?.get(1)?.let { result["script"] = it }
+            textMatch?.groupValues?.get(1)?.let { result["text"] = it }
             
             if (result.isNotEmpty()) result else null
         } catch (e: Exception) {
@@ -428,6 +432,11 @@ Keep responses SHORT and FRIENDLY. Mix Bangla and English naturally.
                     // Just speak the text (already handled in main flow)
                 }
 
+                "create_video" -> {
+                    val script = action["script"] ?: action["text"] ?: return
+                    createRevidVideo(script)
+                }
+
                 else -> Log.d(TAG, "Unknown action: $type")
             }
         } catch (e: Exception) {
@@ -457,6 +466,59 @@ Keep responses SHORT and FRIENDLY. Mix Bangla and English naturally.
             }
         } catch (e: Exception) {
             Log.e(TAG, "Open app error: $appName", e)
+        }
+    }
+
+    private fun createRevidVideo(script: String) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val apiKey = prefManager.revidApiKey
+                if (apiKey.isBlank()) {
+                    withContext(Dispatchers.Main) {
+                        emitLog("MAYA", "Boss, Revid API key lagbe. Settings e dien.")
+                    }
+                    return@launch
+                }
+
+                // Create video generation task
+                val url = java.net.URL("https://api.revidapi.com/paid/sora2/create")
+                val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("x-api-key", apiKey)
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.doOutput = true
+
+                val jsonBody = """
+                {
+                    "model": "sora-2-text-to-video",
+                    "input": {
+                        "prompt": "$script",
+                        "aspect_ratio": "portrait",
+                        "n_frames": "10s"
+                    }
+                }
+                """.trimIndent()
+
+                conn.outputStream.use { it.write(jsonBody.toByteArray()) }
+
+                val responseCode = conn.responseCode
+                val response = if (responseCode == 200) {
+                    conn.inputStream.bufferedReader().use { it.readText() }
+                } else {
+                    conn.errorStream?.bufferedReader()?.use { it.readText() } ?: "Error $responseCode"
+                }
+
+                withContext(Dispatchers.Main) {
+                    emitLog("REVID", "Video generation started!\nResponse: ${response.take(500)}")
+                    emitLog("MAYA", "Boss, video banano shuru hoyeche! 2-3 minute lagbe. Revid.ai dashboard e check koren.")
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Revid video error", e)
+                withContext(Dispatchers.Main) {
+                    emitLog("MAYA", "Video create korte parlam na Boss: ${e.message}")
+                }
+            }
         }
     }
 

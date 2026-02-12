@@ -64,6 +64,10 @@ class PreferenceManager(context: Context) {
         get() = prefs.getString(KEY_SPEECHIFY, "") ?: ""
         set(value) = prefs.edit().putString(KEY_SPEECHIFY, value).apply()
 
+    var revidApiKey: String
+        get() = prefs.getString(KEY_REVID, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_REVID, value).apply()
+
     // ------------------------------------------------------------------ //
     //  Provider Selection                                                 //
     // ------------------------------------------------------------------ //
@@ -205,6 +209,7 @@ class PreferenceManager(context: Context) {
         const val KEY_FREEDOMGPT = "api_key_freedomgpt"
         const val KEY_CARTESIA = "api_key_cartesia"
         const val KEY_SPEECHIFY = "api_key_speechify"
+        const val KEY_REVID = "api_key_revid"
         const val KEY_SELECTED_PROVIDER = "selected_llm_provider"
         const val KEY_SELECTED_MODEL = "selected_model"
         const val KEY_TTS_PROVIDER = "selected_tts_provider"
