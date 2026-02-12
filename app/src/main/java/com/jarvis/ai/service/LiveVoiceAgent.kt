@@ -356,9 +356,22 @@ class LiveVoiceAgent : Service() {
         scope.launch {
             // Step 1: Greet
             _agentState.value = AgentState.GREETING
+            
+            // Wait for TTS to be ready before greeting
+            var waitCount = 0
+            while (!androidTtsReady && waitCount < 50) {
+                delay(100)
+                waitCount++
+            }
+            
             val greeting = generateGreeting()
             emitLog("JARVIS", greeting)
-            safeSpeak(greeting)
+            
+            if (androidTtsReady) {
+                safeSpeak(greeting)
+            } else {
+                Log.w(TAG, "TTS not ready after 5s — skipping greeting")
+            }
 
             // Step 2: CONTINUOUS LOOP
             while (keepListening) {
@@ -584,21 +597,7 @@ class LiveVoiceAgent : Service() {
     // ------------------------------------------------------------------ //
 
     private fun generateGreeting(): String {
-        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-        val timeGreeting = when {
-            hour < 6 -> "এত রাতে জেগে আছেন Boss?"
-            hour < 12 -> "সুপ্রভাত Boss!"
-            hour < 17 -> "Boss, দুপুরের পর কেমন যাচ্ছে?"
-            hour < 21 -> "শুভ সন্ধ্যা Boss!"
-            else -> "Boss, এখনো জেগে আছেন?"
-        }
-
-        val battery = DeviceInfoProvider.getBatteryInfo(this)
-        val batteryWarning = if (battery.percentage in 1..20 && !battery.isCharging) {
-            " Battery ${battery.percentage}% — charge dien."
-        } else ""
-
-        return "$timeGreeting Jarvis ready. Bolun ki korbo?$batteryWarning"
+        return "Hello Boss. Jarvis ready. Bolun ki korbo?"
     }
 
     // ------------------------------------------------------------------ //
