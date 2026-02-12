@@ -17,6 +17,7 @@ import com.jarvis.ai.automation.WhatsAppController
 import com.jarvis.ai.personality.PersonalityEngine
 import com.jarvis.ai.vision.ScreenshotController
 import com.jarvis.ai.vision.VisionAnalyzer
+import com.jarvis.ai.smarthome.SmartHomeController
 import com.jarvis.ai.network.model.ChatMessage
 import com.jarvis.ai.ui.web.WebViewActivity
 import com.jarvis.ai.util.DeviceInfoProvider
@@ -65,6 +66,9 @@ class JarvisBrain(
     private val personalityEngine = PersonalityEngine(context, prefManager)
     private val screenshotController = ScreenshotController(context)
     private val visionAnalyzer = VisionAnalyzer(context)
+    
+    /** Smart Home */
+    private val smartHomeController = SmartHomeController(context, prefManager)
 
     /** Callback for UI updates. */
     var onResponseCallback: ((String) -> Unit)? = null
@@ -701,6 +705,68 @@ class JarvisBrain(
                         withContext(Dispatchers.Main) {
                             voiceEngine.speak("Could not take screenshot")
                         }
+                    }
+                }
+            }
+
+            // ── Smart Home Actions ───────────────────────────────────────
+            "smart_home_on" -> {
+                val deviceName = action.get("device")?.asString ?: ""
+                if (deviceName.isNotBlank()) {
+                    scope.launch {
+                        val result = smartHomeController.turnOn(deviceName)
+                        withContext(Dispatchers.Main) {
+                            voiceEngine.speak(result.message)
+                            onResponseCallback?.invoke(result.message)
+                        }
+                    }
+                } else {
+                    voiceEngine.speak("I need a device name")
+                }
+            }
+
+            "smart_home_off" -> {
+                val deviceName = action.get("device")?.asString ?: ""
+                if (deviceName.isNotBlank()) {
+                    scope.launch {
+                        val result = smartHomeController.turnOff(deviceName)
+                        withContext(Dispatchers.Main) {
+                            voiceEngine.speak(result.message)
+                            onResponseCallback?.invoke(result.message)
+                        }
+                    }
+                } else {
+                    voiceEngine.speak("I need a device name")
+                }
+            }
+
+            "lights_on" -> {
+                scope.launch {
+                    val result = smartHomeController.lightsOn()
+                    withContext(Dispatchers.Main) {
+                        voiceEngine.speak(result.message)
+                        onResponseCallback?.invoke(result.message)
+                    }
+                }
+            }
+
+            "lights_off" -> {
+                scope.launch {
+                    val result = smartHomeController.lightsOff()
+                    withContext(Dispatchers.Main) {
+                        voiceEngine.speak(result.message)
+                        onResponseCallback?.invoke(result.message)
+                    }
+                }
+            }
+
+            "set_temperature" -> {
+                val temp = action.get("temperature")?.asInt ?: 24
+                scope.launch {
+                    val result = smartHomeController.setACTemperature(temp)
+                    withContext(Dispatchers.Main) {
+                        voiceEngine.speak(result.message)
+                        onResponseCallback?.invoke(result.message)
                     }
                 }
             }
