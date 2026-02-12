@@ -159,6 +159,9 @@ dependencies {
     // ── ML Kit for OCR/Vision ───────────────────────────────────
     implementation("com.google.mlkit:text-recognition:16.0.0")
     implementation("com.google.mlkit:image-labeling:17.0.7")
+    
+    // ── Coroutines Play Services (for ML Kit .await()) ──────────
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
 
     // ── Testing ──────────────────────────────────────────────────────
     testImplementation("junit:junit:4.13.2")
