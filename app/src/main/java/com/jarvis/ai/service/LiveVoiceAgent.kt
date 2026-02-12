@@ -784,11 +784,7 @@ Keep responses SHORT and FRIENDLY. Mix Bangla and English naturally.
                 val wsManager = cartesiaWsManager
                 if (wsManager != null && prefManager.selectedTtsProvider == TtsProvider.CARTESIA) {
                     try {
-                        suspendCancellableCoroutine<Unit> { cont ->
-                            wsManager.speak(text) {
-                                if (cont.isActive) cont.resume(Unit, null)
-                            }
-                        }
+                        wsManager.speak(text)  // This is already suspend, just call it
                         return@withTimeout Unit
                     } catch (e: Exception) {
                         Log.w(TAG, "Cartesia WS failed", e)
