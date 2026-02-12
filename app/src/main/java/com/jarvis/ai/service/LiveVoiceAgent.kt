@@ -14,6 +14,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.graphics.Bitmap
 import android.util.Base64
+import android.util.Log
 import android.widget.Toast
 import java.io.ByteArrayOutputStream
 import com.jarvis.ai.JarvisApplication
@@ -89,6 +90,7 @@ class LiveVoiceAgent : Service() {
     // androidTts REMOVED - Boss orders: Cartesia ONLY
     // androidTts REMOVED - Boss orders: Cartesia ONLY
     private var cartesiaClient: CartesiaTtsClient? = null
+    private var cartesiaWsManager: CartesiaWebSocketManager? = null
     private val conversationHistory = mutableListOf<ChatMessage>()
 
     @Volatile
