@@ -6,7 +6,6 @@ import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import android.speech.tts.TextToSpeech
 import android.util.Log
 import com.jarvis.ai.network.client.CartesiaTtsClient
 import com.jarvis.ai.network.client.CartesiaWebSocketManager
@@ -58,9 +57,7 @@ class VoiceEngine(
     private var speechRecognizer: SpeechRecognizer? = null
     private var onResultCallback: ((String) -> Unit)? = null
 
-    // TTS — Android built-in (fallback)
-    private var androidTts: TextToSpeech? = null
-    private var androidTtsReady = false
+    // Android TTS REMOVED - Cartesia ONLY per Boss orders
 
     // TTS — Cartesia HTTP (legacy)
     private var cartesiaClient: CartesiaTtsClient? = null
@@ -83,19 +80,7 @@ class VoiceEngine(
             Log.e(TAG, "Speech recognition not available on this device")
         }
 
-        // Initialize Android TTS as fallback
-        androidTts = TextToSpeech(context) { status ->
-            androidTtsReady = status == TextToSpeech.SUCCESS
-            if (androidTtsReady) {
-                // Try Bengali first, fall back to default
-                val bengali = Locale("bn", "BD")
-                val result = androidTts?.setLanguage(bengali)
-                if (result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                    androidTts?.language = Locale.getDefault()
-                }
-                Log.i(TAG, "Android TTS initialized")
-            }
-        }
+        // Android TTS REMOVED - Boss orders: Cartesia ONLY
 
         // Initialize Cartesia clients if API key is configured
         refreshCartesiaClient()
@@ -221,7 +206,7 @@ class VoiceEngine(
     fun stopSpeaking() {
         cartesiaWsManager?.cancelCurrentGeneration()
         cartesiaClient?.stop()
-        androidTts?.stop()
+        // androidTts?.stop() // REMOVED
         _state.value = State.IDLE
     }
 
@@ -263,17 +248,9 @@ class VoiceEngine(
     }
 
     private fun speakWithAndroidTts(text: String) {
-        if (!androidTtsReady) {
-            Log.e(TAG, "Android TTS not ready")
-            return
-        }
-
-        // Split long text into chunks (Android TTS has a ~4000 char limit)
-        val chunks = text.chunked(3900)
-        chunks.forEachIndexed { index, chunk ->
-            val queueMode = if (index == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
-            androidTts?.speak(chunk, queueMode, null, "jarvis_tts_$index")
-        }
+        // DISABLED per Boss orders - Cartesia TTS ONLY
+        // If Cartesia fails, remain SILENT - no system TTS fallback
+        Log.w(TAG, "Android TTS called but DISABLED - Boss mandates Cartesia ONLY")
     }
 
     // ------------------------------------------------------------------ //
@@ -356,7 +333,7 @@ class VoiceEngine(
 
     fun destroy() {
         speechRecognizer?.destroy()
-        androidTts?.shutdown()
+        // androidTts?.shutdown() // REMOVED
         cartesiaClient?.stop()
         cartesiaWsManager?.destroy()
         scope.cancel()

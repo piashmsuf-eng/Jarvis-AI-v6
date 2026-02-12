@@ -10,10 +10,6 @@ import android.os.IBinder
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
-import android.util.Log
-import androidx.core.app.NotificationCompat
 import android.graphics.Bitmap
 import android.util.Base64
 import java.io.ByteArrayOutputStream
@@ -87,9 +83,8 @@ class LiveVoiceAgent : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private lateinit var prefManager: PreferenceManager
     private var llmClient: LlmClient? = null
-    private var androidTts: TextToSpeech? = null
-    private var androidTtsReady = false
-    private var cartesiaWsManager: CartesiaWebSocketManager? = null
+    // androidTts REMOVED - Boss orders: Cartesia ONLY
+    // androidTts REMOVED - Boss orders: Cartesia ONLY
     private var cartesiaClient: CartesiaTtsClient? = null
     private val conversationHistory = mutableListOf<ChatMessage>()
 
@@ -125,7 +120,7 @@ class LiveVoiceAgent : Service() {
     override fun onDestroy() {
         keepListening = false
         agentState.value = AgentState.INACTIVE
-        androidTts?.shutdown()
+        // androidTts?.shutdown() // REMOVED
         scope.cancel()
         instance = null
         Log.i(TAG, "LiveVoiceAgent destroyed")
@@ -155,22 +150,7 @@ class LiveVoiceAgent : Service() {
         }
 
         // Initialize Android TTS with Bengali
-        androidTts = TextToSpeech(this) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                androidTtsReady = true
-                // Set Bengali language
-                val bengaliLocale = Locale("bn", "BD")
-                val result = androidTts?.setLanguage(bengaliLocale)
-                if (result == TextToSpeech.LANG_NOT_SUPPORTED || result == TextToSpeech.LANG_MISSING_DATA) {
-                    Log.w(TAG, "Bengali not supported, using default")
-                    androidTts?.language = Locale.getDefault()
-                } else {
-                    Log.i(TAG, "TTS language set to Bengali")
-                }
-            } else {
-                Log.e(TAG, "TTS initialization failed")
-            }
-        }
+        // Android TTS initialization REMOVED - Boss orders: Cartesia TTS ONLY
 
         // Initialize Cartesia TTS
         val cartesiaKey = prefManager.cartesiaApiKey
@@ -218,12 +198,10 @@ class LiveVoiceAgent : Service() {
             try {
                 // Wait for TTS to be ready
                 var waitCount = 0
-                while (!androidTtsReady && waitCount < 50) {
                     delay(100)
                     waitCount++
                 }
 
-                if (!androidTtsReady) {
                     Log.e(TAG, "TTS not ready after 5s, cannot continue")
                     return@launch
                 }
@@ -931,7 +909,7 @@ Keep responses SHORT and FRIENDLY. Mix Bangla and English naturally.
             }
         } catch (e: TimeoutCancellationException) {
             Log.w(TAG, "TTS timeout")
-            androidTts?.stop()
+            // androidTts?.stop() // REMOVED
             cartesiaWsManager?.cancelCurrentGeneration()
         } catch (e: Exception) {
             Log.e(TAG, "TTS error", e)
@@ -939,7 +917,6 @@ Keep responses SHORT and FRIENDLY. Mix Bangla and English naturally.
     }
 
     private suspend fun speakWithAndroidTts(text: String) {
-        if (!androidTtsReady) {
             Log.e(TAG, "Android TTS not ready")
             return
         }
@@ -966,7 +943,7 @@ Keep responses SHORT and FRIENDLY. Mix Bangla and English naturally.
                 }
             })
 
-            androidTts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+            // androidTts?.speak() DISABLED - Boss orders: Cartesia ONLY
         }
     }
 
@@ -975,8 +952,7 @@ Keep responses SHORT and FRIENDLY. Mix Bangla and English naturally.
      */
     private fun speakFireAndForget(text: String) {
         try {
-            if (androidTtsReady) {
-                androidTts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "ack_${System.currentTimeMillis()}")
+                // androidTts?.speak() DISABLED - Boss orders: Cartesia ONLY
             }
         } catch (e: Exception) {
             Log.w(TAG, "Fire-and-forget speak failed", e)

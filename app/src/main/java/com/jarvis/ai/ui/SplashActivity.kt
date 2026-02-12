@@ -7,7 +7,6 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.speech.tts.TextToSpeech
 import android.view.View
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.OvershootInterpolator
@@ -20,14 +19,14 @@ import com.jarvis.ai.R
 import com.jarvis.ai.ui.main.MainActivity
 import java.util.Locale
 
-class SplashActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
+class SplashActivity : AppCompatActivity() {
 
-    private var tts: TextToSpeech? = null
+    // TTS REMOVED - Boss orders: Cartesia ONLY
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_splash)
-        tts = TextToSpeech(this, this)
+        // TTS initialization REMOVED - Boss mandates Cartesia ONLY
 
         val tvJarvis = findViewById<TextView>(R.id.tvSplashTitle)
         val tvModby = findViewById<TextView>(R.id.tvSplashModby)
@@ -112,15 +111,10 @@ class SplashActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }, 3200)
     }
 
-    override fun onInit(status: Int) {
-        if (status == TextToSpeech.SUCCESS) {
-            tts?.language = Locale("bn", "BD")
-            tts?.speak("Hello Boss, Maya achi apnar sathe", TextToSpeech.QUEUE_FLUSH, null, "welcome")
-        }
-    }
-
+    // Boss mandates: Cartesia TTS ONLY
+    
     override fun onDestroy() {
-        tts?.shutdown()
+        // tts?.shutdown() // REMOVED
         super.onDestroy()
     }
 }
