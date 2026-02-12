@@ -10,6 +10,10 @@ import com.jarvis.ai.language.LanguageDetector
 import com.jarvis.ai.network.client.LlmClient
 import com.jarvis.ai.phone.CallController
 import com.jarvis.ai.phone.SmsController
+import com.jarvis.ai.automation.AppController
+import com.jarvis.ai.automation.FileController
+import com.jarvis.ai.automation.RoutineManager
+import com.jarvis.ai.automation.WhatsAppController
 import com.jarvis.ai.network.model.ChatMessage
 import com.jarvis.ai.ui.web.WebViewActivity
 import com.jarvis.ai.util.DeviceInfoProvider
@@ -47,6 +51,12 @@ class JarvisBrain(
     /** Phone controllers */
     private val smsController = SmsController(context)
     private val callController = CallController(context)
+    
+    /** Automation controllers */
+    private val whatsAppController = WhatsAppController(context)
+    private val fileController = FileController(context)
+    private val appController = AppController(context)
+    private val routineManager = RoutineManager(context)
 
     /** Callback for UI updates. */
     var onResponseCallback: ((String) -> Unit)? = null
@@ -418,6 +428,201 @@ class JarvisBrain(
                 }
                 voiceEngine.speak(response)
                 onResponseCallback?.invoke(response)
+            }
+
+            // ── WhatsApp Actions ─────────────────────────────────────────
+            "whatsapp_message" -> {
+                val recipient = action.get("recipient")?.asString ?: ""
+                val message = action.get("message")?.asString ?: ""
+                
+                if (recipient.isNotBlank() && message.isNotBlank()) {
+                    scope.launch {
+                        val success = whatsAppController.sendMessage(recipient, message)
+                        val response = if (success) {
+                            "WhatsApp message sent to $recipient"
+                        } else {
+                            "Failed to send WhatsApp message to $recipient"
+                        }
+                        withContext(Dispatchers.Main) {
+                            voiceEngine.speak(response)
+                            onResponseCallback?.invoke(response)
+                        }
+                    }
+                } else {
+                    voiceEngine.speak("I need a contact name and message for WhatsApp.")
+                }
+            }
+
+            "whatsapp_read" -> {
+                val count = action.get("count")?.asInt ?: 5
+                val messages = whatsAppController.readRecentMessages(count)
+                val formatted = whatsAppController.formatForVoice(messages)
+                voiceEngine.speak(formatted)
+                onResponseCallback?.invoke(formatted)
+            }
+
+            "whatsapp_open" -> {
+                val contact = action.get("contact")?.asString ?: ""
+                if (contact.isNotBlank()) {
+                    val success = whatsAppController.openChat(contact)
+                    val response = if (success) {
+                        "Opening WhatsApp chat with $contact"
+                    } else {
+                        "Could not open WhatsApp chat"
+                    }
+                    voiceEngine.speak(response)
+                    onResponseCallback?.invoke(response)
+                } else {
+                    voiceEngine.speak("I need a contact name.")
+                }
+            }
+
+            // ── File Management Actions ──────────────────────────────────
+            "recent_downloads" -> {
+                val count = action.get("count")?.asInt ?: 10
+                val files = fileController.getRecentDownloads(count)
+                val formatted = fileController.formatForVoice(files)
+                voiceEngine.speak(formatted)
+                onResponseCallback?.invoke(formatted)
+            }
+
+            "organize_downloads" -> {
+                val result = fileController.organizeDownloads()
+                val response = "Organized ${result.organized} files. ${result.failed} failed."
+                voiceEngine.speak(response)
+                onResponseCallback?.invoke(response)
+            }
+
+            "clean_temp" -> {
+                val result = fileController.cleanTempFiles()
+                val sizeMB = result.deletedSize / 1024 / 1024
+                val response = "Cleaned ${result.deletedFiles} temp files, freed ${sizeMB}MB"
+                voiceEngine.speak(response)
+                onResponseCallback?.invoke(response)
+            }
+
+            // ── App Management Actions ───────────────────────────────────
+            "open_app" -> {
+                val appName = action.get("app")?.asString ?: ""
+                if (appName.isNotBlank()) {
+                    val success = appController.launchApp(appName)
+                    val response = if (success) {
+                        "Opening $appName"
+                    } else {
+                        "Could not find app: $appName"
+                    }
+                    voiceEngine.speak(response)
+                    onResponseCallback?.invoke(response)
+                } else {
+                    voiceEngine.speak("I need an app name.")
+                }
+            }
+
+            "close_app" -> {
+                val appName = action.get("app")?.asString ?: ""
+                if (appName.isNotBlank()) {
+                    val success = appController.killApp(appName)
+                    val response = if (success) {
+                        "Closed $appName"
+                    } else {
+                        "Could not close $appName"
+                    }
+                    voiceEngine.speak(response)
+                    onResponseCallback?.invoke(response)
+                } else {
+                    voiceEngine.speak("I need an app name.")
+                }
+            }
+
+            "clear_cache" -> {
+                val appName = action.get("app")?.asString ?: ""
+                if (appName.isNotBlank()) {
+                    val success = appController.clearCache(appName)
+                    val response = if (success) {
+                        "Cleared cache for $appName"
+                    } else {
+                        "Could not clear cache for $appName. Root access may be required."
+                    }
+                    voiceEngine.speak(response)
+                    onResponseCallback?.invoke(response)
+                } else {
+                    voiceEngine.speak("I need an app name.")
+                }
+            }
+
+            "running_apps" -> {
+                val apps = appController.getRunningApps()
+                val formatted = appController.formatForVoice(apps)
+                val response = "Running apps: $formatted"
+                voiceEngine.speak(response)
+                onResponseCallback?.invoke(response)
+            }
+
+            // ── Routine Actions ──────────────────────────────────────────
+            "morning_routine" -> {
+                scope.launch {
+                    val result = routineManager.morningRoutine()
+                    val response = result.summary()
+                    withContext(Dispatchers.Main) {
+                        voiceEngine.speak(response)
+                        onResponseCallback?.invoke(response)
+                    }
+                }
+            }
+
+            "night_routine" -> {
+                scope.launch {
+                    val result = routineManager.nightRoutine()
+                    val response = result.summary()
+                    withContext(Dispatchers.Main) {
+                        voiceEngine.speak(response)
+                        onResponseCallback?.invoke(response)
+                    }
+                }
+            }
+
+            "workout_mode" -> {
+                scope.launch {
+                    val result = routineManager.workoutMode()
+                    val response = result.summary()
+                    withContext(Dispatchers.Main) {
+                        voiceEngine.speak(response)
+                        onResponseCallback?.invoke(response)
+                    }
+                }
+            }
+
+            "focus_mode" -> {
+                scope.launch {
+                    val result = routineManager.focusMode()
+                    val response = result.summary()
+                    withContext(Dispatchers.Main) {
+                        voiceEngine.speak(response)
+                        onResponseCallback?.invoke(response)
+                    }
+                }
+            }
+
+            "driving_mode" -> {
+                scope.launch {
+                    val result = routineManager.drivingMode()
+                    val response = result.summary()
+                    withContext(Dispatchers.Main) {
+                        voiceEngine.speak(response)
+                        onResponseCallback?.invoke(response)
+                    }
+                }
+            }
+
+            "cleanup_routine" -> {
+                scope.launch {
+                    val result = routineManager.cleanupRoutine()
+                    val response = result.summary()
+                    withContext(Dispatchers.Main) {
+                        voiceEngine.speak(response)
+                        onResponseCallback?.invoke(response)
+                    }
+                }
             }
 
             else -> {
