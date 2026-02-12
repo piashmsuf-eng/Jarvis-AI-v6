@@ -14,11 +14,15 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import android.graphics.Bitmap
+import android.util.Base64
+import java.io.ByteArrayOutputStream
 import com.jarvis.ai.JarvisApplication
 import com.jarvis.ai.accessibility.JarvisAccessibilityService
 import com.jarvis.ai.network.client.LlmClient
 import com.jarvis.ai.network.client.CartesiaTtsClient
 import com.jarvis.ai.network.client.CartesiaWebSocketManager
+import com.jarvis.ai.skills.DeepLinkSkills
 import com.jarvis.ai.network.model.ChatMessage
 import com.jarvis.ai.network.model.TtsProvider
 import com.jarvis.ai.ui.main.MainActivity
@@ -247,6 +251,19 @@ class LiveVoiceAgent : Service() {
                         Log.i(TAG, "User said: '$userSpeech'")
                         emitLog("YOU", userSpeech)
 
+                        // Check for DeepLink skill match (FAST PATH)
+                        val skillMatch = DeepLinkSkills.matchSkill(userSpeech)
+                        if (skillMatch != null) {
+                            val (deepLink, fallbackPkg) = skillMatch
+                            speakFireAndForget("Accha Boss, korchi")
+                            val success = DeepLinkSkills.execute(this@LiveVoiceAgent, deepLink, fallbackPkg, userSpeech)
+                            if (success) {
+                                emitLog("MAYA", "DeepLink skill executed!")
+                                continue
+                            }
+                            // If failed, fall through to normal LLM path
+                        }
+
                         // Check for shutdown
                         if (userSpeech.lowercase().contains("jarvis stop") ||
                             userSpeech.lowercase().contains("jarvis bondho")) {
@@ -356,6 +373,7 @@ You can perform these actions by returning JSON:
 - open_app: {"action":"open_app","app":"whatsapp|youtube|chrome|camera|settings"}
 - read_screen: {"action":"read_screen"}
 - web_search: {"action":"web_search","query":"search terms"}
+- analyze_screen: {"action":"analyze_screen"} — Analyze current screen using AI vision
 - speak: Just respond with text (no JSON needed)
 
 Examples:
@@ -416,6 +434,31 @@ Keep responses SHORT and FRIENDLY. Mix Bangla and English naturally.
             Log.e(TAG, "Action parse error", e)
             null
         }
+    }
+
+    private fun takeScreenshot(): Bitmap? {
+        return try {
+            val a11y = JarvisAccessibilityService.instance ?: return null
+            // Use accessibility service to take screenshot
+            a11y.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)
+            // Wait a moment for screenshot to be taken
+            Thread.sleep(500)
+            // Note: We can't directly get the bitmap via Accessibility Service
+            // This returns null but triggers the system screenshot
+            // For actual bitmap, we need to use MediaProjection API
+            // For now, return null and use screen text instead
+            null
+        } catch (e: Exception) {
+            Log.e(TAG, "Screenshot failed", e)
+            null
+        }
+    }
+
+    private fun bitmapToBase64(bitmap: Bitmap): String {
+        val outputStream = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 80, outputStream)
+        val bytes = outputStream.toByteArray()
+        return Base64.encodeToString(bytes, Base64.NO_WRAP)
     }
 
     private suspend fun executeAction(action: Map<String, String>) {
@@ -587,6 +630,27 @@ Keep responses SHORT and FRIENDLY. Mix Bangla and English naturally.
                     }
                 }
 
+                "analyze_screen" -> {
+                    scope.launch {
+                        try {
+                            val a11y = JarvisAccessibilityService.instance
+                            if (a11y != null) {
+                                val screenText = a11y.readScreenTextFlat()
+                                emitLog("VISION", "Screen content:\n${screenText.take(1000)}")
+                                
+                                // Ask LLM to analyze what's on screen
+                                val analysis = askLlm("What do you see on this screen? Screen text: ${screenText.take(800)}")
+                                emitLog("MAYA", "Vision analysis: $analysis")
+                                safeSpeak(analysis)
+                            } else {
+                                emitLog("MAYA", "Accessibility OFF — can't analyze screen")
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Screen analysis failed", e)
+                        }
+                    }
+                }
+
                 else -> Log.d(TAG, "Unknown action: $type")
             }
         } catch (e: Exception) {
@@ -597,13 +661,36 @@ Keep responses SHORT and FRIENDLY. Mix Bangla and English naturally.
     private fun openApp(appName: String) {
         try {
             val pm = packageManager
+            
+            // Try exact package name matches first
             val launchIntent = when (appName.lowercase()) {
                 "whatsapp" -> pm.getLaunchIntentForPackage("com.whatsapp")
                 "youtube" -> pm.getLaunchIntentForPackage("com.google.android.youtube")
                 "chrome" -> pm.getLaunchIntentForPackage("com.android.chrome")
                 "camera" -> pm.getLaunchIntentForPackage("com.android.camera")
                     ?: pm.getLaunchIntentForPackage("com.sec.android.app.camera")
+                    ?: pm.getLaunchIntentForPackage("com.google.android.GoogleCamera")
                 "settings" -> Intent(android.provider.Settings.ACTION_SETTINGS)
+                "instagram", "ig" -> pm.getLaunchIntentForPackage("com.instagram.android")
+                "facebook", "fb" -> pm.getLaunchIntentForPackage("com.facebook.katana")
+                "messenger" -> pm.getLaunchIntentForPackage("com.facebook.orca")
+                "telegram" -> pm.getLaunchIntentForPackage("org.telegram.messenger")
+                "twitter", "x" -> pm.getLaunchIntentForPackage("com.twitter.android")
+                "tiktok" -> pm.getLaunchIntentForPackage("com.zhiliaoapp.musically")
+                "spotify" -> pm.getLaunchIntentForPackage("com.spotify.music")
+                "maps", "google maps" -> pm.getLaunchIntentForPackage("com.google.android.apps.maps")
+                "gmail" -> pm.getLaunchIntentForPackage("com.google.android.gm")
+                "photos", "gallery" -> pm.getLaunchIntentForPackage("com.google.android.apps.photos")
+                    ?: pm.getLaunchIntentForPackage("com.sec.android.gallery3d")
+                "phone", "dialer" -> pm.getLaunchIntentForPackage("com.google.android.dialer")
+                    ?: pm.getLaunchIntentForPackage("com.android.dialer")
+                "contacts" -> pm.getLaunchIntentForPackage("com.google.android.contacts")
+                    ?: pm.getLaunchIntentForPackage("com.android.contacts")
+                "calculator" -> pm.getLaunchIntentForPackage("com.google.android.calculator")
+                    ?: pm.getLaunchIntentForPackage("com.android.calculator2")
+                "clock", "alarm" -> pm.getLaunchIntentForPackage("com.google.android.deskclock")
+                    ?: pm.getLaunchIntentForPackage("com.android.deskclock")
+                "play store", "playstore" -> pm.getLaunchIntentForPackage("com.android.vending")
                 else -> null
             }
 
@@ -611,9 +698,29 @@ Keep responses SHORT and FRIENDLY. Mix Bangla and English naturally.
                 launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(launchIntent)
                 Log.i(TAG, "$appName opened")
-            } else {
-                Log.w(TAG, "$appName not found")
+                return
             }
+
+            // Fuzzy search all installed apps by label
+            val apps = pm.getInstalledApplications(0)
+            val query = appName.lowercase()
+            
+            val match = apps.firstOrNull { appInfo ->
+                val label = appInfo.loadLabel(pm).toString().lowercase()
+                label.contains(query) || query.contains(label)
+            }
+
+            if (match != null) {
+                val intent = pm.getLaunchIntentForPackage(match.packageName)
+                if (intent != null) {
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    startActivity(intent)
+                    Log.i(TAG, "Fuzzy match: ${match.loadLabel(pm)} opened")
+                    return
+                }
+            }
+
+            Log.w(TAG, "$appName not found")
         } catch (e: Exception) {
             Log.e(TAG, "Open app error: $appName", e)
         }
