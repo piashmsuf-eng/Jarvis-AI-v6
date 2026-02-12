@@ -28,6 +28,7 @@ import kotlinx.coroutines.*
 import java.util.*
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
+import kotlinx.coroutines.suspendCancellableCoroutine
 
 /**
  * LiveVoiceAgent — MINIMAL WORKING VERSION
@@ -783,12 +784,12 @@ Keep responses SHORT and FRIENDLY. Mix Bangla and English naturally.
                 val wsManager = cartesiaWsManager
                 if (wsManager != null && prefManager.selectedTtsProvider == TtsProvider.CARTESIA) {
                     try {
-                        suspendCoroutine { cont ->
+                        suspendCancellableCoroutine<Unit> { cont ->
                             wsManager.speak(text) {
-                                if (cont.isActive) cont.resume(Unit)
+                                if (cont.isActive) cont.resume(Unit, null)
                             }
                         }
-                        return@withTimeout
+                        return@withTimeout Unit
                     } catch (e: Exception) {
                         Log.w(TAG, "Cartesia WS failed", e)
                     }
