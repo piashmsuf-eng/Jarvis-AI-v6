@@ -43,6 +43,21 @@ class LiveVoiceAgent : Service() {
     companion object {
         private const val TAG = "LiveVoiceAgent"
         private const val NOTIFICATION_ID = 2001
+        const val EXTRA_SCHEDULED_TASK = "extra_scheduled_task"
+
+        enum class AgentState {
+            INACTIVE, GREETING, LISTENING, THINKING, SPEAKING, EXECUTING
+        }
+
+        @Volatile
+        var instance: LiveVoiceAgent? = null
+            private set
+
+        val isActive: Boolean get() = instance != null
+
+        val agentState = kotlinx.coroutines.flow.MutableStateFlow(AgentState.INACTIVE)
+        val conversationLog = kotlinx.coroutines.flow.MutableSharedFlow<ConversationEntry>(replay = 50, extraBufferCapacity = 20)
+        val textInput = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 5)
 
         fun start(context: Context) {
             val intent = Intent(context, LiveVoiceAgent::class.java)
@@ -57,6 +72,8 @@ class LiveVoiceAgent : Service() {
             context.stopService(Intent(context, LiveVoiceAgent::class.java))
         }
     }
+
+    data class ConversationEntry(val sender: String, val text: String, val time: String)
 
     // Core components
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -75,6 +92,7 @@ class LiveVoiceAgent : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         prefManager = PreferenceManager(this)
         Log.i(TAG, "LiveVoiceAgent created - MINIMAL VERSION")
     }
@@ -85,9 +103,10 @@ class LiveVoiceAgent : Service() {
             return START_NOT_STICKY
         }
 
-        startForeground(NOTIFICATION_ID, createNotification("Jarvis listening..."))
+        startForeground(NOTIFICATION_ID, createNotification("Maya listening..."))
         initializeComponents()
         startConversationLoop()
+        listenForTextInput()
         return START_STICKY
     }
 
@@ -95,8 +114,10 @@ class LiveVoiceAgent : Service() {
 
     override fun onDestroy() {
         keepListening = false
+        agentState.value = AgentState.INACTIVE
         androidTts?.shutdown()
         scope.cancel()
+        instance = null
         Log.i(TAG, "LiveVoiceAgent destroyed")
         super.onDestroy()
     }
@@ -143,6 +164,29 @@ class LiveVoiceAgent : Service() {
     }
 
     // ================================================================
+    // TEXT INPUT LISTENER
+    // ================================================================
+
+    private fun listenForTextInput() {
+        scope.launch {
+            textInput.collect { typedText ->
+                if (typedText.isNotBlank() && keepListening) {
+                    try {
+                        emitLog("YOU (typed)", typedText)
+                        agentState.value = AgentState.THINKING
+                        val response = withContext(Dispatchers.IO) { askLlm(typedText) }
+                        emitLog("MAYA", response)
+                        agentState.value = AgentState.SPEAKING
+                        speak(response)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Text input error", e)
+                    }
+                }
+            }
+        }
+    }
+
+    // ================================================================
     // MAIN CONVERSATION LOOP
     // ================================================================
 
@@ -164,13 +208,16 @@ class LiveVoiceAgent : Service() {
                 }
 
                 // GREETING
+                agentState.value = AgentState.GREETING
                 val greeting = "Hello Boss, I am Maya. How can I help you?"
                 Log.i(TAG, "Greeting: $greeting")
+                emitLog("MAYA", greeting)
                 safeSpeak(greeting)
 
                 // CONTINUOUS LOOP
                 while (keepListening) {
                     try {
+                        agentState.value = AgentState.LISTENING
                         updateNotification("Listening... Bolun Boss!")
 
                         // 1. LISTEN
@@ -181,6 +228,7 @@ class LiveVoiceAgent : Service() {
                         }
 
                         Log.i(TAG, "User said: '$userSpeech'")
+                        emitLog("YOU", userSpeech)
 
                         // Check for shutdown
                         if (userSpeech.lowercase().contains("jarvis stop") ||
@@ -194,6 +242,7 @@ class LiveVoiceAgent : Service() {
                         speakFireAndForget("OK Boss")
 
                         // 3. Call LLM in background
+                        agentState.value = AgentState.THINKING
                         updateNotification("Processing...")
                         val response = try {
                             withTimeout(15_000L) {
@@ -209,8 +258,10 @@ class LiveVoiceAgent : Service() {
                         }
 
                         Log.i(TAG, "LLM response: $response")
+                        emitLog("MAYA", response)
 
                         // 4. Speak the response
+                        agentState.value = AgentState.SPEAKING
                         updateNotification("Speaking...")
                         safeSpeak(response)
 
@@ -464,7 +515,7 @@ Keep responses SHORT and FRIENDLY. Mix Bangla and English naturally.
                     putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 5000L)
                 }
 
-                recognizer.setRecognitionListener(object : RecognitionListener {
+                recognizer!!.setRecognitionListener(object : RecognitionListener {
                     override fun onResults(results: Bundle?) {
                         val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                             ?.firstOrNull() ?: ""
@@ -495,7 +546,7 @@ Keep responses SHORT and FRIENDLY. Mix Bangla and English naturally.
                     override fun onEvent(eventType: Int, params: Bundle?) {}
                 })
 
-                recognizer.startListening(intent)
+                recognizer!!.startListening(intent)
                 Log.d(TAG, "STT startListening called")
 
             } catch (e: Exception) {
@@ -605,6 +656,28 @@ Keep responses SHORT and FRIENDLY. Mix Bangla and English naturally.
             nm.notify(NOTIFICATION_ID, createNotification(text))
         } catch (e: Exception) {
             Log.w(TAG, "Notification update failed", e)
+        }
+    }
+
+    private suspend fun emitLog(sender: String, text: String) {
+        try {
+            val time = java.text.SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+            conversationLog.emit(ConversationEntry(sender, text, time))
+        } catch (e: Exception) {
+            Log.w(TAG, "emitLog failed", e)
+        }
+    }
+
+    fun handleScheduledTask(task: String) {
+        scope.launch {
+            try {
+                emitLog("SYSTEM", "Scheduled task: $task")
+                val response = askLlm(task)
+                emitLog("MAYA", response)
+                speak(response)
+            } catch (e: Exception) {
+                Log.e(TAG, "Scheduled task failed", e)
+            }
         }
     }
 }
