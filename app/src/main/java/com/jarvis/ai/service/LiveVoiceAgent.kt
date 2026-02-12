@@ -917,34 +917,9 @@ Keep responses SHORT and FRIENDLY. Mix Bangla and English naturally.
     }
 
     private suspend fun speakWithAndroidTts(text: String) {
-            Log.e(TAG, "Android TTS not ready")
-            return
-        }
-        
-        suspendCoroutine { cont ->
-            val utteranceId = "maya_${System.currentTimeMillis()}"
-
-            androidTts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(id: String?) {}
-                
-                override fun onDone(id: String?) {
-                    if (id == utteranceId) {
-                        cont.resume(Unit)
-                    }
-                }
-
-                @Deprecated("Deprecated in Java")
-                override fun onError(id: String?) {
-                    cont.resume(Unit)
-                }
-
-                override fun onError(id: String?, errorCode: Int) {
-                    cont.resume(Unit)
-                }
-            })
-
-            // androidTts?.speak() DISABLED - Boss orders: Cartesia ONLY
-        }
+        // FUNCTION DISABLED - Boss orders: Cartesia TTS ONLY
+        // If Cartesia fails, remain SILENT - no system TTS fallback
+        Log.w(TAG, "speakWithAndroidTts() called but DISABLED per Boss directive")
     }
 
     /**
