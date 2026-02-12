@@ -16,6 +16,7 @@ import android.graphics.Bitmap
 import android.util.Base64
 import android.util.Log
 import android.widget.Toast
+import androidx.core.app.NotificationCompat
 import java.io.ByteArrayOutputStream
 import com.jarvis.ai.JarvisApplication
 import com.jarvis.ai.accessibility.JarvisAccessibilityService
