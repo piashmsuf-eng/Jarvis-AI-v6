@@ -887,30 +887,47 @@ Keep responses SHORT and FRIENDLY. Mix Bangla and English naturally.
         
         try {
             withTimeout(25_000L) {
-                // Try Cartesia WebSocket first
-                val wsManager = cartesiaWsManager
-                if (wsManager != null && prefManager.selectedTtsProvider == TtsProvider.CARTESIA) {
-                    try {
-                        wsManager.speak(text, onComplete = null)  // Await completion
-                        return@withTimeout Unit
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Cartesia WS failed", e)
+                // Use Cartesia if enabled, otherwise Android TTS
+                if (prefManager.selectedTtsProvider == TtsProvider.CARTESIA) {
+                    var cartesiaSuccess = false
+                    
+                    // Try Cartesia WebSocket first
+                    val wsManager = cartesiaWsManager
+                    if (wsManager != null) {
+                        try {
+                            wsManager.speak(text, onComplete = null)
+                            cartesiaSuccess = true
+                            Log.i(TAG, "Spoke via Cartesia WebSocket")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Cartesia WS failed", e)
+                        }
                     }
-                }
-                
-                // Try Cartesia HTTP
-                val httpClient = cartesiaClient
-                if (httpClient != null && prefManager.selectedTtsProvider == TtsProvider.CARTESIA) {
-                    try {
-                        val result = httpClient.speak(text)
-                        if (result.isSuccess) return@withTimeout
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Cartesia HTTP failed", e)
+                    
+                    // Try Cartesia HTTP if WS failed
+                    if (!cartesiaSuccess) {
+                        val httpClient = cartesiaClient
+                        if (httpClient != null) {
+                            try {
+                                val result = httpClient.speak(text)
+                                if (result.isSuccess) {
+                                    cartesiaSuccess = true
+                                    Log.i(TAG, "Spoke via Cartesia HTTP")
+                                }
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Cartesia HTTP failed", e)
+                            }
+                        }
                     }
+                    
+                    // Fallback to Android TTS only if Cartesia failed
+                    if (!cartesiaSuccess) {
+                        Log.i(TAG, "Cartesia failed, using Android TTS")
+                        speakWithAndroidTts(text)
+                    }
+                } else {
+                    // Android TTS selected
+                    speakWithAndroidTts(text)
                 }
-                
-                // Fallback to Android TTS
-                speakWithAndroidTts(text)
             }
         } catch (e: TimeoutCancellationException) {
             Log.w(TAG, "TTS timeout")
