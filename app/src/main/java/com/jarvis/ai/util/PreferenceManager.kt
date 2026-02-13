@@ -153,6 +153,45 @@ class PreferenceManager(context: Context) {
         get() = prefs.getString(KEY_SYSTEM_PROMPT, "") ?: ""
         set(value) = prefs.edit().putString(KEY_SYSTEM_PROMPT, value).apply()
 
+    // ------------------------------------------------------------------ //
+    //  Assistant Defaults (Jarvis/Maya Style)                             //
+    // ------------------------------------------------------------------ //
+
+    /** Assistant preset: 0=Jarvis/Maya default, 1=Custom */
+    var assistantPreset: Int
+        get() = prefs.getInt(KEY_ASSISTANT_PRESET, 0)
+        set(value) = prefs.edit().putInt(KEY_ASSISTANT_PRESET, value).apply()
+
+    /** Tone & persona: 0=Professional,1=Casual,2=Funny,3=Romantic,4=Jarvis */
+    var toneStyle: Int
+        get() = prefs.getInt(KEY_TONE_STYLE, 1)
+        set(value) = prefs.edit().putInt(KEY_TONE_STYLE, value).apply()
+
+    /** Response style: 0=Short,1=Balanced,2=Step-by-step */
+    var responseStyle: Int
+        get() = prefs.getInt(KEY_RESPONSE_STYLE, 1)
+        set(value) = prefs.edit().putInt(KEY_RESPONSE_STYLE, value).apply()
+
+    /** Code-first responses (code before explanation) */
+    var codeFirst: Boolean
+        get() = prefs.getBoolean(KEY_CODE_FIRST, false)
+        set(value) = prefs.edit().putBoolean(KEY_CODE_FIRST, value).apply()
+
+    /** Safety level: 0=Strict,1=Standard,2=Relaxed */
+    var safetyLevel: Int
+        get() = prefs.getInt(KEY_SAFETY_LEVEL, 1)
+        set(value) = prefs.edit().putInt(KEY_SAFETY_LEVEL, value).apply()
+
+    /** Creativity: 0=Low,1=Medium,2=High */
+    var creativityLevel: Int
+        get() = prefs.getInt(KEY_CREATIVITY_LEVEL, 1)
+        set(value) = prefs.edit().putInt(KEY_CREATIVITY_LEVEL, value).apply()
+
+    /** Verbosity: 0=Short,1=Medium,2=Detailed */
+    var verbosityLevel: Int
+        get() = prefs.getInt(KEY_VERBOSITY_LEVEL, 1)
+        set(value) = prefs.edit().putInt(KEY_VERBOSITY_LEVEL, value).apply()
+
     var voiceSensitivity: Int
         get() = prefs.getInt(KEY_VOICE_SENSITIVITY, 2)
         set(value) = prefs.edit().putInt(KEY_VOICE_SENSITIVITY, value).apply()
@@ -253,5 +292,13 @@ class PreferenceManager(context: Context) {
         const val KEY_BILINGUAL_MODE = "bilingual_mode"
         const val KEY_AUTO_DETECT_LANGUAGE = "auto_detect_language"
         const val KEY_PERSONALITY_MODE = "personality_mode"
+
+        const val KEY_ASSISTANT_PRESET = "assistant_preset"
+        const val KEY_TONE_STYLE = "assistant_tone_style"
+        const val KEY_RESPONSE_STYLE = "assistant_response_style"
+        const val KEY_CODE_FIRST = "assistant_code_first"
+        const val KEY_SAFETY_LEVEL = "assistant_safety_level"
+        const val KEY_CREATIVITY_LEVEL = "assistant_creativity_level"
+        const val KEY_VERBOSITY_LEVEL = "assistant_verbosity_level"
     }
 }

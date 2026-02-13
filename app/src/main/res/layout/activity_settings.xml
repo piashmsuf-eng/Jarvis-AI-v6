@@ -406,6 +406,121 @@
             android:padding="12dp"
             android:layout_marginBottom="16dp" />
 
+        <!-- Section: Assistant Defaults -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="ASSISTANT DEFAULTS"
+            android:textColor="#888888"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Assistant Preset"
+            android:textColor="#CCCCCC"
+            android:textSize="13sp"
+            android:layout_marginBottom="4dp" />
+
+        <Spinner
+            android:id="@+id/spinnerAssistantPreset"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:background="#2A2A2A"
+            android:padding="12dp"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Tone & Persona"
+            android:textColor="#CCCCCC"
+            android:textSize="13sp"
+            android:layout_marginBottom="4dp" />
+
+        <Spinner
+            android:id="@+id/spinnerToneStyle"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:background="#2A2A2A"
+            android:padding="12dp"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Response Style"
+            android:textColor="#CCCCCC"
+            android:textSize="13sp"
+            android:layout_marginBottom="4dp" />
+
+        <Spinner
+            android:id="@+id/spinnerResponseStyle"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:background="#2A2A2A"
+            android:padding="12dp"
+            android:layout_marginBottom="12dp" />
+
+        <com.google.android.material.switchmaterial.SwitchMaterial
+            android:id="@+id/switchCodeFirst"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Code-first responses"
+            android:textColor="#CCCCCC"
+            android:textSize="13sp"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Safety Level"
+            android:textColor="#CCCCCC"
+            android:textSize="13sp"
+            android:layout_marginBottom="4dp" />
+
+        <Spinner
+            android:id="@+id/spinnerSafetyLevel"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:background="#2A2A2A"
+            android:padding="12dp"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Creativity Level"
+            android:textColor="#CCCCCC"
+            android:textSize="13sp"
+            android:layout_marginBottom="4dp" />
+
+        <Spinner
+            android:id="@+id/spinnerCreativity"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:background="#2A2A2A"
+            android:padding="12dp"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Verbosity"
+            android:textColor="#CCCCCC"
+            android:textSize="13sp"
+            android:layout_marginBottom="4dp" />
+
+        <Spinner
+            android:id="@+id/spinnerVerbosity"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:background="#2A2A2A"
+            android:padding="12dp"
+            android:layout_marginBottom="16dp" />
+
         <!-- Custom System Prompt -->
         <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"

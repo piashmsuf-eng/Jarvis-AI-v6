@@ -79,6 +79,44 @@ class SettingsActivity : AppCompatActivity() {
         "External SD Card"
     )
 
+    // Assistant defaults (Jarvis/Maya style)
+    private val assistantPresetLabels = arrayOf(
+        "Jarvis/Maya Default (Recommended)",
+        "Custom"
+    )
+
+    private val toneStyleLabels = arrayOf(
+        "Professional",
+        "Casual",
+        "Funny",
+        "Romantic",
+        "Jarvis Movie"
+    )
+
+    private val responseStyleLabels = arrayOf(
+        "Short",
+        "Balanced",
+        "Step-by-step"
+    )
+
+    private val safetyLevelLabels = arrayOf(
+        "Strict",
+        "Standard",
+        "Relaxed"
+    )
+
+    private val creativityLabels = arrayOf(
+        "Low",
+        "Medium",
+        "High"
+    )
+
+    private val verbosityLabels = arrayOf(
+        "Short",
+        "Medium",
+        "Detailed"
+    )
+
     private var suppressDeveloperSwitch = false
 
     // Theme presets
@@ -115,6 +153,7 @@ class SettingsActivity : AppCompatActivity() {
         setupProviderSpinner()
         setupTtsSpinner()
         setupLanguageSpinners()
+        setupAssistantSpinners()
         setupThemeSpinner()
         setupDeveloperSwitch()
         loadSavedSettings()
@@ -244,6 +283,44 @@ class SettingsActivity : AppCompatActivity() {
         binding.spinnerMemoryStorage.adapter = storageAdapter
     }
 
+    private fun setupAssistantSpinners() {
+        binding.spinnerAssistantPreset.adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            assistantPresetLabels
+        )
+
+        binding.spinnerToneStyle.adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            toneStyleLabels
+        )
+
+        binding.spinnerResponseStyle.adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            responseStyleLabels
+        )
+
+        binding.spinnerSafetyLevel.adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            safetyLevelLabels
+        )
+
+        binding.spinnerCreativity.adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            creativityLabels
+        )
+
+        binding.spinnerVerbosity.adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            verbosityLabels
+        )
+    }
+
     private fun setupDeveloperSwitch() {
         binding.switchDeveloperMode.setOnCheckedChangeListener { _, isChecked ->
             if (suppressDeveloperSwitch) return@setOnCheckedChangeListener
@@ -305,6 +382,15 @@ class SettingsActivity : AppCompatActivity() {
         binding.spinnerVoiceMood.setSelection(moodIndex)
         val storageIndex = if (prefManager.memoryStorage == "external") 1 else 0
         binding.spinnerMemoryStorage.setSelection(storageIndex)
+
+        // Assistant defaults
+        binding.spinnerAssistantPreset.setSelection(prefManager.assistantPreset.coerceIn(0, assistantPresetLabels.size - 1))
+        binding.spinnerToneStyle.setSelection(prefManager.toneStyle.coerceIn(0, toneStyleLabels.size - 1))
+        binding.spinnerResponseStyle.setSelection(prefManager.responseStyle.coerceIn(0, responseStyleLabels.size - 1))
+        binding.switchCodeFirst.isChecked = prefManager.codeFirst
+        binding.spinnerSafetyLevel.setSelection(prefManager.safetyLevel.coerceIn(0, safetyLevelLabels.size - 1))
+        binding.spinnerCreativity.setSelection(prefManager.creativityLevel.coerceIn(0, creativityLabels.size - 1))
+        binding.spinnerVerbosity.setSelection(prefManager.verbosityLevel.coerceIn(0, verbosityLabels.size - 1))
 
         // Theme
         binding.spinnerTheme.setSelection(prefManager.themeIndex.coerceIn(0, themeLabels.size - 1))
@@ -666,6 +752,25 @@ class SettingsActivity : AppCompatActivity() {
         val customColor = binding.etCustomAccentColor.text.toString().trim()
         if (customColor.startsWith("#") && customColor.length >= 7) {
             prefManager.customAccentColor = customColor
+        }
+
+        // Assistant defaults
+        prefManager.assistantPreset = binding.spinnerAssistantPreset.selectedItemPosition
+        if (prefManager.assistantPreset == 0) {
+            // Jarvis/Maya default preset
+            prefManager.toneStyle = 1
+            prefManager.responseStyle = 1
+            prefManager.codeFirst = false
+            prefManager.safetyLevel = 1
+            prefManager.creativityLevel = 1
+            prefManager.verbosityLevel = 1
+        } else {
+            prefManager.toneStyle = binding.spinnerToneStyle.selectedItemPosition
+            prefManager.responseStyle = binding.spinnerResponseStyle.selectedItemPosition
+            prefManager.codeFirst = binding.switchCodeFirst.isChecked
+            prefManager.safetyLevel = binding.spinnerSafetyLevel.selectedItemPosition
+            prefManager.creativityLevel = binding.spinnerCreativity.selectedItemPosition
+            prefManager.verbosityLevel = binding.spinnerVerbosity.selectedItemPosition
         }
 
         // Start/stop wake word service based on toggle

@@ -47,13 +47,61 @@ class PersonalityEngine(
      * Get system prompt for current personality
      */
     fun getSystemPrompt(baseLang: String = "en"): String {
-        val mode = getCurrentMode()
-        return when (mode) {
+        val mode = resolveToneMode()
+        val base = when (mode) {
             PersonalityMode.PROFESSIONAL -> getProfessionalPrompt(baseLang)
             PersonalityMode.CASUAL -> getCasualPrompt(baseLang)
             PersonalityMode.FUNNY -> getFunnyPrompt(baseLang)
             PersonalityMode.ROMANTIC -> getRomanticPrompt(baseLang)
             PersonalityMode.JARVIS_MOVIE -> getJarvisMoviePrompt(baseLang)
+        }
+
+        val customPrompt = prefManager.customSystemPrompt
+        if (customPrompt.isNotBlank()) {
+            return customPrompt
+        }
+
+        val responseStyle = when (prefManager.responseStyle) {
+            0 -> if (baseLang == "bn") "উত্তর সংক্ষিপ্ত ও সরাসরি রাখুন।" else "Keep responses short and direct."
+            2 -> if (baseLang == "bn") "ধাপে ধাপে ব্যাখ্যা দিন।" else "Provide step-by-step instructions."
+            else -> if (baseLang == "bn") "পরিষ্কার ও ভারসাম্যপূর্ণ উত্তর দিন।" else "Provide clear and balanced responses."
+        }
+
+        val codeFirst = if (prefManager.codeFirst) {
+            if (baseLang == "bn") "কোড চাইলে আগে কোড, পরে সংক্ষিপ্ত ব্যাখ্যা দিন।" else "If code is requested, output code first, then brief explanation."
+        } else ""
+
+        val safety = when (prefManager.safetyLevel) {
+            0 -> if (baseLang == "bn") "নিরাপত্তা কঠোরভাবে বজায় রাখুন এবং ঝুঁকিপূর্ণ অনুরোধে না বলুন।" else "Follow strict safety rules and refuse risky requests."
+            2 -> if (baseLang == "bn") "নিরাপত্তা বজায় রাখুন, তবে যতটা সম্ভব সহায়ক থাকুন।" else "Follow safety guidelines but be as helpful as possible."
+            else -> if (baseLang == "bn") "মানক নিরাপত্তা নীতি অনুসরণ করুন।" else "Follow standard safety guidelines."
+        }
+
+        val creativity = when (prefManager.creativityLevel) {
+            0 -> if (baseLang == "bn") "সৃজনশীলতা কম রাখুন।" else "Low creativity."
+            2 -> if (baseLang == "bn") "সৃজনশীলতা বেশি রাখুন।" else "High creativity."
+            else -> if (baseLang == "bn") "মাঝারি সৃজনশীলতা রাখুন।" else "Medium creativity."
+        }
+
+        val verbosity = when (prefManager.verbosityLevel) {
+            0 -> if (baseLang == "bn") "সংক্ষিপ্ত উত্তর দিন।" else "Short verbosity."
+            2 -> if (baseLang == "bn") "বিস্তারিত উত্তর দিন।" else "Detailed verbosity."
+            else -> if (baseLang == "bn") "মাঝারি দৈর্ঘ্যের উত্তর দিন।" else "Medium verbosity."
+        }
+
+        return listOf(base, responseStyle, codeFirst, safety, creativity, verbosity)
+            .filter { it.isNotBlank() }
+            .joinToString("\n")
+    }
+
+    private fun resolveToneMode(): PersonalityMode {
+        return when (prefManager.toneStyle) {
+            0 -> PersonalityMode.PROFESSIONAL
+            1 -> PersonalityMode.CASUAL
+            2 -> PersonalityMode.FUNNY
+            3 -> PersonalityMode.ROMANTIC
+            4 -> PersonalityMode.JARVIS_MOVIE
+            else -> getCurrentMode()
         }
     }
     

@@ -786,8 +786,11 @@ class JarvisBrain(
     private fun buildMessages(client: LlmClient, currentInput: String? = null): List<ChatMessage> {
         val messages = mutableListOf<ChatMessage>()
 
-        // System prompt
-        messages.add(ChatMessage(role = "system", content = client.JARVIS_SYSTEM_PROMPT))
+        // System prompt (Jarvis/Maya defaults + user settings)
+        val systemPrompt = personalityEngine.getSystemPrompt(
+            baseLang = if (prefManager.ttsLanguage.startsWith("bn")) "bn" else "en"
+        )
+        messages.add(ChatMessage(role = "system", content = systemPrompt))
 
         // Inject current screen context if accessibility is running
         val a11y = JarvisAccessibilityService.instance
