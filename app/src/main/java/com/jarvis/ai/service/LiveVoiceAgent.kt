@@ -20,6 +20,7 @@ import androidx.core.app.NotificationCompat
 import java.io.ByteArrayOutputStream
 import com.jarvis.ai.JarvisApplication
 import com.jarvis.ai.accessibility.JarvisAccessibilityService
+import com.jarvis.ai.personality.PersonalityEngine
 import com.jarvis.ai.network.client.LlmClient
 import com.jarvis.ai.network.client.CartesiaTtsClient
 import com.jarvis.ai.network.client.CartesiaWebSocketManager
