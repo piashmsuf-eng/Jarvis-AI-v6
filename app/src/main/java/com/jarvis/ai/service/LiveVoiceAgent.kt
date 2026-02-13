@@ -203,11 +203,13 @@ class LiveVoiceAgent : Service() {
         scope.launch {
             try {
                 // Cartesia-only: no Android TTS readiness gate
-                // If Cartesia is unavailable, we stay silent and show a toast when speaking
+
+                var lastUserSpeechTime = System.currentTimeMillis()
+                var lastCheckinTime = 0L
 
                 // GREETING
                 agentState.value = AgentState.GREETING
-                val greeting = "Hello Boss, I am Maya. How can I help you?"
+                val greeting = "Hello Boss, I am Jarvis. How can I help you?"
                 Log.i(TAG, "Greeting: $greeting")
                 emitLog("MAYA", greeting)
                 safeSpeak(greeting)
@@ -215,15 +217,24 @@ class LiveVoiceAgent : Service() {
                 // CONTINUOUS LOOP
                 while (keepListening) {
                     try {
+                        val now = System.currentTimeMillis()
+                        if (prefManager.idleCheckinEnabled) {
+                            val idleMs = prefManager.idleCheckinSeconds * 1000L
+                            if (now - lastUserSpeechTime > idleMs && now - lastCheckinTime > idleMs) {
+                                lastCheckinTime = now
+                                safeSpeak(prefManager.idleCheckinMessage)
+                            }
+                        }
+
                         agentState.value = AgentState.LISTENING
                         updateNotification("Listening... Bolun Boss!")
 
                         // 1. LISTEN
                         val userSpeech = safeListenForSpeech()
                         if (userSpeech.isBlank()) {
-                            // No speech detected, listen again
                             continue
                         }
+                        lastUserSpeechTime = System.currentTimeMillis()
 
                         Log.i(TAG, "User said: '$userSpeech'")
                         emitLog("YOU", userSpeech)
@@ -342,27 +353,10 @@ class LiveVoiceAgent : Service() {
     private fun buildMessages(): List<ChatMessage> {
         val messages = mutableListOf<ChatMessage>()
 
-        // System prompt
-        val systemPrompt = """
-You are Maya, a helpful Bengali voice assistant. You speak in Bangla mixed with English.
-
-You can perform these actions by returning JSON:
-- open_app: {"action":"open_app","app":"whatsapp|youtube|chrome|camera|settings"}
-- read_screen: {"action":"read_screen"}
-- web_search: {"action":"web_search","query":"search terms"}
-- analyze_screen: {"action":"analyze_screen"} — Analyze current screen using AI vision
-- speak: Just respond with text (no JSON needed)
-
-Examples:
-User: "WhatsApp kholo"
-Assistant: {"action":"open_app","app":"whatsapp"} WhatsApp khulchi Boss!
-
-User: "Google e search koro best restaurants"
-Assistant: {"action":"web_search","query":"best restaurants"} Searching Boss!
-
-Keep responses SHORT and FRIENDLY. Mix Bangla and English naturally.
-""".trimIndent()
-
+        // System prompt (Jarvis/Maya defaults + settings)
+        val systemPrompt = PersonalityEngine(this, prefManager).getSystemPrompt(
+            baseLang = if (prefManager.ttsLanguage.startsWith("bn")) "bn" else "en"
+        )
         messages.add(ChatMessage(role = "system", content = systemPrompt))
 
         // Add screen context if available

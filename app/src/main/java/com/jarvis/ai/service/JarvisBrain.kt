@@ -120,14 +120,17 @@ class JarvisBrain(
                     return@launch
                 }
 
-                // Detect language and parse Bengali commands
+                // Detect language and parse Bengali/Banglish commands
                 val language = LanguageDetector.detect(userText)
                 val processedText = when (language) {
                     LanguageDetector.Language.BENGALI, LanguageDetector.Language.MIXED -> {
-                        // Parse Bengali to English for consistent processing
-                        val parsed = BengaliCommandParser.parse(userText)
-                        Log.d(TAG, "Bengali parsed: '$userText' -> '$parsed'")
-                        parsed
+                        if (prefManager.banglishEnabled) {
+                            val parsed = BengaliCommandParser.parse(userText)
+                            Log.d(TAG, "Bengali/Banglish parsed: '$userText' -> '$parsed'")
+                            parsed
+                        } else {
+                            userText
+                        }
                     }
                     else -> userText
                 }

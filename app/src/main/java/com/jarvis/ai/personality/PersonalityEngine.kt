@@ -95,6 +95,9 @@ class PersonalityEngine(
     }
 
     private fun resolveToneMode(): PersonalityMode {
+        if (prefManager.assistantPreset == 0) {
+            return PersonalityMode.JARVIS_MOVIE
+        }
         return when (prefManager.toneStyle) {
             0 -> PersonalityMode.PROFESSIONAL
             1 -> PersonalityMode.CASUAL

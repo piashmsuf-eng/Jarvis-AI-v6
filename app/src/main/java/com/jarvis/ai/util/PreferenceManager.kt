@@ -164,12 +164,12 @@ class PreferenceManager(context: Context) {
 
     /** Tone & persona: 0=Professional,1=Casual,2=Funny,3=Romantic,4=Jarvis */
     var toneStyle: Int
-        get() = prefs.getInt(KEY_TONE_STYLE, 1)
+        get() = prefs.getInt(KEY_TONE_STYLE, 4)
         set(value) = prefs.edit().putInt(KEY_TONE_STYLE, value).apply()
 
     /** Response style: 0=Short,1=Balanced,2=Step-by-step */
     var responseStyle: Int
-        get() = prefs.getInt(KEY_RESPONSE_STYLE, 1)
+        get() = prefs.getInt(KEY_RESPONSE_STYLE, 0)
         set(value) = prefs.edit().putInt(KEY_RESPONSE_STYLE, value).apply()
 
     /** Code-first responses (code before explanation) */
@@ -189,8 +189,29 @@ class PreferenceManager(context: Context) {
 
     /** Verbosity: 0=Short,1=Medium,2=Detailed */
     var verbosityLevel: Int
-        get() = prefs.getInt(KEY_VERBOSITY_LEVEL, 1)
+        get() = prefs.getInt(KEY_VERBOSITY_LEVEL, 0)
         set(value) = prefs.edit().putInt(KEY_VERBOSITY_LEVEL, value).apply()
+
+    /** Idle check-ins (Jarvis proactive) */
+    var idleCheckinEnabled: Boolean
+        get() = prefs.getBoolean(KEY_IDLE_CHECKIN_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_IDLE_CHECKIN_ENABLED, value).apply()
+
+    /** Idle check-in interval (seconds) */
+    var idleCheckinSeconds: Int
+        get() = prefs.getInt(KEY_IDLE_CHECKIN_SECONDS, 45)
+        set(value) = prefs.edit().putInt(KEY_IDLE_CHECKIN_SECONDS, value).apply()
+
+    /** Idle check-in message */
+    var idleCheckinMessage: String
+        get() = prefs.getString(KEY_IDLE_CHECKIN_MESSAGE, "Ki holo Boss, kichu bolcho na… tomar kichu lagbe?")
+            ?: "Ki holo Boss, kichu bolcho na… tomar kichu lagbe?"
+        set(value) = prefs.edit().putString(KEY_IDLE_CHECKIN_MESSAGE, value).apply()
+
+    /** Enable Banglish parsing */
+    var banglishEnabled: Boolean
+        get() = prefs.getBoolean(KEY_BANGLISH_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_BANGLISH_ENABLED, value).apply()
 
     var voiceSensitivity: Int
         get() = prefs.getInt(KEY_VOICE_SENSITIVITY, 2)
@@ -300,5 +321,9 @@ class PreferenceManager(context: Context) {
         const val KEY_SAFETY_LEVEL = "assistant_safety_level"
         const val KEY_CREATIVITY_LEVEL = "assistant_creativity_level"
         const val KEY_VERBOSITY_LEVEL = "assistant_verbosity_level"
+        const val KEY_IDLE_CHECKIN_ENABLED = "assistant_idle_checkin_enabled"
+        const val KEY_IDLE_CHECKIN_SECONDS = "assistant_idle_checkin_seconds"
+        const val KEY_IDLE_CHECKIN_MESSAGE = "assistant_idle_checkin_message"
+        const val KEY_BANGLISH_ENABLED = "assistant_banglish_enabled"
     }
 }

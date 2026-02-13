@@ -117,6 +117,13 @@ class SettingsActivity : AppCompatActivity() {
         "Detailed"
     )
 
+    private val idleIntervalLabels = arrayOf(
+        "30 seconds",
+        "45 seconds",
+        "60 seconds",
+        "90 seconds"
+    )
+
     private var suppressDeveloperSwitch = false
 
     // Theme presets
@@ -319,6 +326,41 @@ class SettingsActivity : AppCompatActivity() {
             android.R.layout.simple_spinner_dropdown_item,
             verbosityLabels
         )
+
+        binding.spinnerIdleInterval.adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            idleIntervalLabels
+        )
+
+        binding.spinnerAssistantPreset.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, pos: Int, id: Long) {
+                val isDefault = pos == 0
+                setAssistantControlsEnabled(!isDefault)
+                if (isDefault) {
+                    applyJarvisPresetUI()
+                }
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+    }
+
+    private fun setAssistantControlsEnabled(enabled: Boolean) {
+        binding.spinnerToneStyle.isEnabled = enabled
+        binding.spinnerResponseStyle.isEnabled = enabled
+        binding.switchCodeFirst.isEnabled = enabled
+        binding.spinnerSafetyLevel.isEnabled = enabled
+        binding.spinnerCreativity.isEnabled = enabled
+        binding.spinnerVerbosity.isEnabled = enabled
+    }
+
+    private fun applyJarvisPresetUI() {
+        binding.spinnerToneStyle.setSelection(4)
+        binding.spinnerResponseStyle.setSelection(0)
+        binding.switchCodeFirst.isChecked = false
+        binding.spinnerSafetyLevel.setSelection(1)
+        binding.spinnerCreativity.setSelection(1)
+        binding.spinnerVerbosity.setSelection(0)
     }
 
     private fun setupDeveloperSwitch() {
@@ -391,6 +433,23 @@ class SettingsActivity : AppCompatActivity() {
         binding.spinnerSafetyLevel.setSelection(prefManager.safetyLevel.coerceIn(0, safetyLevelLabels.size - 1))
         binding.spinnerCreativity.setSelection(prefManager.creativityLevel.coerceIn(0, creativityLabels.size - 1))
         binding.spinnerVerbosity.setSelection(prefManager.verbosityLevel.coerceIn(0, verbosityLabels.size - 1))
+
+        binding.switchIdleCheckin.isChecked = prefManager.idleCheckinEnabled
+        val idleIndex = when (prefManager.idleCheckinSeconds) {
+            30 -> 0
+            45 -> 1
+            60 -> 2
+            90 -> 3
+            else -> 1
+        }
+        binding.spinnerIdleInterval.setSelection(idleIndex)
+        binding.etIdleMessage.setText(prefManager.idleCheckinMessage)
+        binding.switchBanglish.isChecked = prefManager.banglishEnabled
+
+        setAssistantControlsEnabled(prefManager.assistantPreset != 0)
+        if (prefManager.assistantPreset == 0) {
+            applyJarvisPresetUI()
+        }
 
         // Theme
         binding.spinnerTheme.setSelection(prefManager.themeIndex.coerceIn(0, themeLabels.size - 1))
@@ -757,13 +816,13 @@ class SettingsActivity : AppCompatActivity() {
         // Assistant defaults
         prefManager.assistantPreset = binding.spinnerAssistantPreset.selectedItemPosition
         if (prefManager.assistantPreset == 0) {
-            // Jarvis/Maya default preset
-            prefManager.toneStyle = 1
-            prefManager.responseStyle = 1
+            // Jarvis/Maya default preset (Iron Man Jarvis tone)
+            prefManager.toneStyle = 4
+            prefManager.responseStyle = 0
             prefManager.codeFirst = false
             prefManager.safetyLevel = 1
             prefManager.creativityLevel = 1
-            prefManager.verbosityLevel = 1
+            prefManager.verbosityLevel = 0
         } else {
             prefManager.toneStyle = binding.spinnerToneStyle.selectedItemPosition
             prefManager.responseStyle = binding.spinnerResponseStyle.selectedItemPosition
@@ -772,6 +831,19 @@ class SettingsActivity : AppCompatActivity() {
             prefManager.creativityLevel = binding.spinnerCreativity.selectedItemPosition
             prefManager.verbosityLevel = binding.spinnerVerbosity.selectedItemPosition
         }
+
+        prefManager.idleCheckinEnabled = binding.switchIdleCheckin.isChecked
+        prefManager.idleCheckinSeconds = when (binding.spinnerIdleInterval.selectedItemPosition) {
+            0 -> 30
+            1 -> 45
+            2 -> 60
+            3 -> 90
+            else -> 45
+        }
+        prefManager.idleCheckinMessage = binding.etIdleMessage.text.toString().trim().ifBlank {
+            "Ki holo Boss, kichu bolcho na… tomar kichu lagbe?"
+        }
+        prefManager.banglishEnabled = binding.switchBanglish.isChecked
 
         // Start/stop wake word service based on toggle
         if (binding.switchWakeWord.isChecked && prefManager.picovoiceAccessKey.isNotBlank()) {

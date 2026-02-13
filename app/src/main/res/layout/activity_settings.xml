@@ -519,7 +519,49 @@
             android:layout_height="48dp"
             android:background="#2A2A2A"
             android:padding="12dp"
-            android:layout_marginBottom="16dp" />
+            android:layout_marginBottom="12dp" />
+
+        <com.google.android.material.switchmaterial.SwitchMaterial
+            android:id="@+id/switchBanglish"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Enable Banglish understanding"
+            android:textColor="#CCCCCC"
+            android:textSize="13sp"
+            android:layout_marginBottom="12dp" />
+
+        <com.google.android.material.switchmaterial.SwitchMaterial
+            android:id="@+id/switchIdleCheckin"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Proactive check-ins when silent"
+            android:textColor="#CCCCCC"
+            android:textSize="13sp"
+            android:layout_marginBottom="8dp" />
+
+        <Spinner
+            android:id="@+id/spinnerIdleInterval"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:background="#2A2A2A"
+            android:padding="12dp"
+            android:layout_marginBottom="8dp" />
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Idle check-in message"
+            android:layout_marginBottom="16dp"
+            app:hintTextColor="#888888"
+            app:boxStrokeColor="#00E5FF">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etIdleMessage"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp" />
+        </com.google.android.material.textfield.TextInputLayout>
 
         <!-- Custom System Prompt -->
         <com.google.android.material.textfield.TextInputLayout

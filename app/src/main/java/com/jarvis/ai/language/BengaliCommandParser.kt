@@ -16,6 +16,7 @@ object BengaliCommandParser {
         
         // Apply all translation mappings
         parsed = translateVerbs(parsed)
+        parsed = translateBanglish(parsed)
         parsed = translateNouns(parsed)
         parsed = translateActions(parsed)
         parsed = translateQuestions(parsed)
@@ -23,6 +24,44 @@ object BengaliCommandParser {
         parsed = translateCommon(parsed)
         
         return parsed.trim()
+    }
+
+    /**
+     * Translate common Banglish tokens to English
+     */
+    private fun translateBanglish(text: String): String {
+        var result = text
+        val banglishMap = mapOf(
+            "koro" to "do",
+            "korbo" to "do",
+            "korchi" to "do",
+            "korcho" to "do",
+            "koren" to "do",
+            "kholo" to "open",
+            "khule" to "open",
+            "bolo" to "tell",
+            "bol" to "tell",
+            "diyo" to "give",
+            "dao" to "give",
+            "lagbe" to "need",
+            "bujhi" to "understand",
+            "bujte" to "understand",
+            "valo" to "good",
+            "bhalo" to "good",
+            "kisu" to "something",
+            "kichu" to "something",
+            "cholo" to "go",
+            "jao" to "go",
+            "chalao" to "play",
+            "bajao" to "play",
+            "bondho" to "close",
+            "on" to "turn on",
+            "off" to "turn off"
+        )
+        banglishMap.forEach { (bn, en) ->
+            result = result.replace(bn, en)
+        }
+        return result
     }
     
     /**

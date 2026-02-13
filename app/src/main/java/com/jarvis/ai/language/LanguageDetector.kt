@@ -19,21 +19,36 @@ object LanguageDetector {
      */
     fun detect(text: String): Language {
         if (text.isBlank()) return Language.ENGLISH
-        
+
         val bengaliChars = text.count { isBengaliChar(it) }
         val englishChars = text.count { it.isLetter() && !isBengaliChar(it) }
         val totalLetters = bengaliChars + englishChars
-        
+
         if (totalLetters == 0) return Language.ENGLISH
-        
+
         val bengaliPercent = (bengaliChars.toFloat() / totalLetters) * 100
-        
+        val banglish = containsBanglish(text)
+
         return when {
             bengaliPercent >= 70 -> Language.BENGALI
             bengaliPercent >= 20 -> Language.MIXED
+            banglish -> Language.MIXED
             else -> Language.ENGLISH
         }
     }
+
+    private fun containsBanglish(text: String): Boolean {
+        val normalized = text.lowercase()
+        return banglishTokens.any { normalized.contains(it) }
+    }
+
+    private val banglishTokens = listOf(
+        "koro", "korbo", "koris", "korbe", "koren", "korcho", "korchi",
+        "kholo", "khul", "khule", "bolo", "bol", "bolchi", "bolcho",
+        "diyo", "dao", "diben", "den", "nibo", "niben", "niye",
+        "kisu", "kichu", "lagbe", "bujhi", "bujte", "valo", "bhalo",
+        "jarvis", "boss", "sir", "please", "plz"
+    )
     
     /**
      * Check if character is Bengali (Unicode range: \u0980-\u09FF)
