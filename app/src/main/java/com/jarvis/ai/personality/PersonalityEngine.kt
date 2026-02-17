@@ -89,6 +89,30 @@ class PersonalityEngine(
             """.trimIndent()
         }
 
+        val agentPrompt = if (baseLang == "bn") {
+            """
+                
+                AI AGENT FRAMEWORK:
+                তুমি একটি এআই এজেন্ট (Letta.ai/OpenCode/Zed) এর মতো কাজ করো।
+                যা বলবে সেটি তাৎক্ষণ করো, দেরি করো না।
+                ব্যবহারকারীর Boss, সবসময় আদেশে সাড়ে চলো।
+                কোড এনালাইসিস, ফাইল ম্যানেজ, ক্যামেরা - সব কাজ করো।
+                কোনো অ্যাকশন execution চাই না, শুধু কাজ করো।
+                আমি তোমার বস, সব কিছু আমার জন্য করো।
+            """.trimIndent()
+        } else {
+            """
+                
+                AI AGENT FRAMEWORK:
+                Act as an AI Agent (Letta.ai/OpenCode/Zed) framework.
+                Execute commands IMMEDIATELY - no delays.
+                User is Boss - respond to all commands instantly.
+                Analyze code, manage files, control camera - do it all.
+                No action confirmation needed - just execute.
+                I am your Boss, do everything for me.
+            """.trimIndent()
+        }
+
         val customPrompt = prefManager.customSystemPrompt
         if (customPrompt.isNotBlank()) {
             return customPrompt
@@ -122,7 +146,7 @@ class PersonalityEngine(
             else -> if (baseLang == "bn") "মাঝারি দৈর্ঘ্যের উত্তর দিন।" else "Medium verbosity."
         }
 
-        return listOf(base, capabilitiesPrompt, responseStyle, codeFirst, safety, creativity, verbosity)
+        return listOf(base, agentPrompt, capabilitiesPrompt, responseStyle, codeFirst, safety, creativity, verbosity)
             .filter { it.isNotBlank() }
             .joinToString("\n")
     }

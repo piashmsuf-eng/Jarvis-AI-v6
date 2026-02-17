@@ -56,6 +56,14 @@ class PreferenceManager(context: Context) {
         get() = prefs.getString(KEY_FREEDOMGPT, "") ?: ""
         set(value) = prefs.edit().putString(KEY_FREEDOMGPT, value).apply()
 
+    var lettaApiKey: String
+        get() = prefs.getString(KEY_LETTA, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_LETTA, value).apply()
+
+    var openCodeApiKey: String
+        get() = prefs.getString(KEY_OPENCODE, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_OPENCODE, value).apply()
+
     var cartesiaApiKey: String
         get() = prefs.getString(KEY_CARTESIA, "") ?: ""
         set(value) = prefs.edit().putString(KEY_CARTESIA, value).apply()
@@ -74,9 +82,9 @@ class PreferenceManager(context: Context) {
 
     var selectedLlmProvider: LlmProvider
         get() {
-            val name = prefs.getString(KEY_SELECTED_PROVIDER, LlmProvider.OPENROUTER.name)
-            return try { LlmProvider.valueOf(name ?: LlmProvider.OPENROUTER.name) }
-            catch (_: Exception) { LlmProvider.OPENROUTER }
+            val name = prefs.getString(KEY_SELECTED_PROVIDER, LlmProvider.LETTA.name)  // Default to Letta
+            return try { LlmProvider.valueOf(name ?: LlmProvider.LETTA.name) }
+            catch (_: Exception) { LlmProvider.LETTA }
         }
         set(value) = prefs.edit().putString(KEY_SELECTED_PROVIDER, value.name).apply()
 
@@ -265,6 +273,8 @@ class PreferenceManager(context: Context) {
     fun getApiKeyForProvider(provider: LlmProvider): String {
         return when (provider) {
             LlmProvider.OPENROUTER -> openRouterApiKey
+            LlmProvider.LETTA -> lettaApiKey
+            LlmProvider.OPENCODE_ZED -> openCodeApiKey
             LlmProvider.OPENAI -> openAiApiKey
             LlmProvider.GEMINI -> geminiApiKey
             LlmProvider.CLAUDE -> claudeApiKey
@@ -290,6 +300,8 @@ class PreferenceManager(context: Context) {
         const val KEY_CLAUDE = "api_key_claude"
         const val KEY_GROQ = "api_key_groq"
         const val KEY_FREEDOMGPT = "api_key_freedomgpt"
+        const val KEY_LETTA = "api_key_letta"
+        const val KEY_OPENCODE = "api_key_opencode"
         const val KEY_CARTESIA = "api_key_cartesia"
         const val KEY_SPEECHIFY = "api_key_speechify"
         const val KEY_REVID = "api_key_revid"

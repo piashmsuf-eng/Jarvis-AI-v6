@@ -213,6 +213,16 @@ enum class LlmProvider(
         defaultBaseUrl = "https://openrouter.ai/api/v1/",
         defaultModel = "openai/gpt-4o"
     ),
+    LETTA(
+        displayName = "Letta.ai Agent",
+        defaultBaseUrl = "https://api.letta.ai/v1/",
+        defaultModel = "letta-v2"
+    ),
+    OPENCODE_ZED(
+        displayName = "OpenCode (Zed)",
+        defaultBaseUrl = "https://api.opencode.ai/v1/",
+        defaultModel = "zed-code-v3"
+    ),
     OPENAI(
         displayName = "OpenAI",
         defaultBaseUrl = "https://api.openai.com/v1/",
