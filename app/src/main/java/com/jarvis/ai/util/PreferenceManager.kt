@@ -129,10 +129,15 @@ class PreferenceManager(context: Context) {
         get() = prefs.getString(KEY_TTS_LANGUAGE, "bn-BD") ?: "bn-BD"
         set(value) = prefs.edit().putString(KEY_TTS_LANGUAGE, value).apply()
     
-    /** Bengali voice ID for Cartesia TTS */
+/** Bengali voice ID for Cartesia TTS - default to Pooja (Bangla Girl) */
     var bengaliVoiceId: String
-        get() = prefs.getString(KEY_BENGALI_VOICE_ID, "bengali-male-professional") ?: "bengali-male-professional"
+        get() = prefs.getString(KEY_BENGALI_VOICE_ID, "d8909a06-7a08-4400-831a-0a6042cabd4a") ?: "d8909a06-7a08-4400-831a-0a6042cabd4a"
         set(value) = prefs.edit().putString(KEY_BENGALI_VOICE_ID, value).apply()
+    
+    /** Cartesia voice ID - default to Bengali Pooja voice */
+    var cartesiaVoiceId: String
+        get() = prefs.getString(KEY_CARTESIA_VOICE_ID, "d8909a06-7a08-4400-831a-0a6042cabd4a") ?: "d8909a06-7a08-4400-831a-0a6042cabd4a"
+        set(value) = prefs.edit().putString(KEY_CARTESIA_VOICE_ID, value).apply()
     
     /** Enable bilingual mode (Bengali + English) */
     var bilingualMode: Boolean
@@ -164,12 +169,12 @@ class PreferenceManager(context: Context) {
 
     /** Tone & persona: 0=Professional,1=Casual,2=Funny,3=Romantic,4=Jarvis */
     var toneStyle: Int
-        get() = prefs.getInt(KEY_TONE_STYLE, 4)
+        get() = prefs.getInt(KEY_TONE_STYLE, 3)
         set(value) = prefs.edit().putInt(KEY_TONE_STYLE, value).apply()
 
     /** Response style: 0=Short,1=Balanced,2=Step-by-step */
     var responseStyle: Int
-        get() = prefs.getInt(KEY_RESPONSE_STYLE, 0)
+        get() = prefs.getInt(KEY_RESPONSE_STYLE, 1)
         set(value) = prefs.edit().putInt(KEY_RESPONSE_STYLE, value).apply()
 
     /** Code-first responses (code before explanation) */

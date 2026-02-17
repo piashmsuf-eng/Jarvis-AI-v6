@@ -95,6 +95,7 @@ class LiveVoiceAgent : Service() {
     private var cartesiaClient: CartesiaTtsClient? = null
     private var cartesiaWsManager: CartesiaWebSocketManager? = null
     private val conversationHistory = mutableListOf<ChatMessage>()
+    private var audioPlayer: android.media.MediaPlayer? = null
 
     @Volatile
     private var keepListening = false
@@ -128,7 +129,7 @@ class LiveVoiceAgent : Service() {
     override fun onDestroy() {
         keepListening = false
         agentState.value = AgentState.INACTIVE
-        // androidTts?.shutdown() // REMOVED
+        audioPlayer?.release()
         scope.cancel()
         instance = null
         Log.i(TAG, "LiveVoiceAgent destroyed")
@@ -157,18 +158,29 @@ class LiveVoiceAgent : Service() {
             Log.w(TAG, "No API key configured")
         }
 
-        // Initialize Android TTS with Bengali
-        // Android TTS initialization REMOVED - Boss orders: Cartesia TTS ONLY
-
-        // Initialize Cartesia TTS
+        // Initialize Cartesia TTS with Bengali Girl voice
         val cartesiaKey = prefManager.cartesiaApiKey
+        val defaultVoiceId = prefManager.cartesiaVoiceId.ifBlank { "d8909a06-7a08-4400-831a-0a6042cabd4a" }
+        
         if (cartesiaKey.isNotBlank()) {
-            cartesiaClient = CartesiaTtsClient(apiKey = cartesiaKey, voiceId = prefManager.cartesiaVoiceId.ifBlank { "bd9120b6-7761-47a6-a446-77ca49132781" })
+            // Initialize Cartesia HTTP client
+            cartesiaClient = CartesiaTtsClient(
+                apiKey = cartesiaKey,
+                voiceId = defaultVoiceId
+            )
+            
+            // Initialize Cartesia WebSocket with heartbeat
             if (prefManager.useCartesiaWebSocket) {
-                cartesiaWsManager = CartesiaWebSocketManager(apiKey = cartesiaKey, voiceId = prefManager.cartesiaVoiceId.ifBlank { "bd9120b6-7761-47a6-a446-77ca49132781" })
-                cartesiaWsManager?.connect()
+                cartesiaWsManager = CartesiaWebSocketManager(
+                    apiKey = cartesiaKey,
+                    voiceId = defaultVoiceId
+                ).apply {
+                    connect()
+                }
             }
-            Log.i(TAG, "Cartesia TTS initialized")
+            Log.i(TAG, "Cartesia TTS initialized with Pooja voice (Bengali Girl): $defaultVoiceId")
+        } else {
+            Log.w(TAG, "No Cartesia API key - will use Android TTS fallback")
         }
 
         // Start Live Vision Service for girlfriend-like proactive behavior
@@ -252,6 +264,11 @@ class LiveVoiceAgent : Service() {
                                     }
                                     safeSpeak(message)
                                 }
+                            }
+                            
+                            // Auto-restart on crash recovery
+                            if (agentState.value == AgentState.INACTIVE) {
+                                agentState.value = AgentState.LISTENING
                             }
 
                         agentState.value = AgentState.LISTENING
@@ -1008,18 +1025,21 @@ class LiveVoiceAgent : Service() {
         if (text.isBlank()) return
 
         try {
-            withTimeout(25_000L) {
+            withTimeout(30_000L) {
                 var cartesiaSuccess = false
+                val speakComplete = kotlinx.coroutines.CompletableDeferred<Unit>()
 
                 // Try Cartesia WebSocket first
                 val wsManager = cartesiaWsManager
                 if (wsManager != null) {
                     try {
-                        wsManager.speak(text, onComplete = null)
+                        wsManager.speak(text, onComplete = { speakComplete.complete(Unit) })
+                        speakComplete.await()
                         cartesiaSuccess = true
                         Log.i(TAG, "Spoke via Cartesia WebSocket")
                     } catch (e: Exception) {
                         Log.w(TAG, "Cartesia WS failed", e)
+                        speakComplete.complete(Unit)
                     }
                 }
 
@@ -1030,8 +1050,12 @@ class LiveVoiceAgent : Service() {
                         try {
                             val result = httpClient.speak(text)
                             if (result.isSuccess) {
-                                cartesiaSuccess = true
-                                Log.i(TAG, "Spoke via Cartesia HTTP")
+                                // HTTP returns audio bytes that need to be played back
+                                result.getOrNull()?.let { audioBytes ->
+                                    playAudioBytes(audioBytes)
+                                    cartesiaSuccess = true
+                                    Log.i(TAG, "Spoke via Cartesia HTTP")
+                                }
                             }
                         } catch (e: Exception) {
                             Log.w(TAG, "Cartesia HTTP failed", e)
@@ -1039,10 +1063,10 @@ class LiveVoiceAgent : Service() {
                     }
                 }
 
-                // If Cartesia failed, remain silent and notify
+                // If Cartesia failed, fallback to Android TTS temporarily
                 if (!cartesiaSuccess) {
-                    Log.w(TAG, "Cartesia failed - remaining silent per Boss directive")
-                    showToast("Cartesia unavailable. Please check network/API key.")
+                    Log.w(TAG, "Cartesia failed - using Android TTS fallback")
+                    speakAndroidFallback(text)
                 }
             }
         } catch (e: TimeoutCancellationException) {
@@ -1050,6 +1074,76 @@ class LiveVoiceAgent : Service() {
             cartesiaWsManager?.cancelCurrentGeneration()
         } catch (e: Exception) {
             Log.e(TAG, "TTS error", e)
+        }
+    }
+
+    private fun playAudioBytes(bytes: ByteArray) {
+        try {
+            // Cleanup previous player
+            audioPlayer?.release()
+            
+            val tempFile = java.io.File.createTempFile("cartesia_audio", ".mp3", cacheDir)
+            tempFile.writeBytes(bytes)
+            
+            audioPlayer = android.media.MediaPlayer().apply {
+                try {
+                    setDataSource(tempFile.absolutePath)
+                    setOnCompletionListener {
+                        tempFile.delete()
+                        release()
+                    }
+                    setOnErrorListener { _, what, extra ->
+                        Log.e(TAG, "MediaPlayer error: $what, extra: $extra")
+                        release()
+                        true
+                    }
+                    prepareAsync()
+                    setOnPreparedListener { start() }
+                } catch (e: Exception) {
+                    Log.e(TAG, "MediaPlayer setup failed", e)
+                    release()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Audio playback failed", e)
+        }
+    }
+
+    private var androidTts: android.speech.tts.TextToSpeech? = null
+    private val ttsInitLatch = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+    private fun speakAndroidFallback(text: String) {
+        try {
+            if (androidTts == null) {
+                androidTts = android.speech.tts.TextToSpeech(this@LiveVoiceAgent) { status ->
+                    if (status == android.speech.tts.TextToSpeech.SUCCESS) {
+                        setLanguage(java.util.Locale("bn", "BD"))
+                        ttsInitLatch.complete(Unit)
+                    } else {
+                        ttsInitLatch.completeExceptionally(Exception("TTS init failed"))
+                    }
+                }
+            }
+            
+            scope.launch {
+                ttsInitLatch.await()
+                androidTts?.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "fallback_" + System.currentTimeMillis())
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Android TTS fallback failed", e)
+        }
+    }
+
+    private fun speakAndroidFallback(text: String) {
+        try {
+            val tts = android.speech.tts.TextToSpeech(this@LiveVoiceAgent) { status ->
+                if (status == android.speech.tts.TextToSpeech.SUCCESS) {
+                    tts.language = java.util.Locale("bn", "BD")
+                    tts.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "fallback")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Android TTS fallback failed", e)
         }
     }
 
