@@ -1048,10 +1048,10 @@ class LiveVoiceAgent : Service() {
                     val httpClient = cartesiaClient
                     if (httpClient != null) {
                         try {
-                            val result = httpClient.speak(text)
-                            if (result.isSuccess) {
-                                // HTTP returns audio bytes that need to be played back
-                                result.getOrNull()?.let { audioBytes ->
+                            val audioResult = httpClient.synthesize(text, "bn")
+                            if (audioResult.isSuccess) {
+                                // Play the audio bytes directly
+                                audioResult.getOrNull()?.let { audioBytes ->
                                     playAudioBytes(audioBytes)
                                     cartesiaSuccess = true
                                     Log.i(TAG, "Spoke via Cartesia HTTP")
@@ -1127,6 +1127,7 @@ class LiveVoiceAgent : Service() {
             
             scope.launch {
                 ttsInitLatch.await()
+                androidTts?.setLanguage(java.util.Locale("bn", "BD"))
                 androidTts?.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "fallback_" + System.currentTimeMillis())
             }
         } catch (e: Exception) {
