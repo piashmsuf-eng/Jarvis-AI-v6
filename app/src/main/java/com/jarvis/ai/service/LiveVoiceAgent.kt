@@ -442,7 +442,7 @@ class LiveVoiceAgent : Service() {
         val messages = mutableListOf<ChatMessage>()
         
         // Add camera vision context if available
-        if (LiveVisionService.isActive && LiveVisionService.latestFrameCache.isNotEmpty()) {
+        if (LiveVisionService.isActive && LiveVisionService.instance?.latestFrameCache?.isNotEmpty() == true) {
             val visionPrompt = LiveVisionService.analyzeScene()
             messages.add(ChatMessage(role = "system", content = visionPrompt))
         }
