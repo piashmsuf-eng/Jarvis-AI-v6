@@ -89,7 +89,7 @@ class LiveVisionService : Service() {
     private var backgroundThread: HandlerThread? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     
-    private val latestFrameCache = mutableListOf<Bitmap>()
+    val latestFrameCache = mutableListOf<Bitmap>()
 
     override fun onCreate() {
         super.onCreate()
