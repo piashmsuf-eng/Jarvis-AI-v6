@@ -1117,7 +1117,6 @@ class LiveVoiceAgent : Service() {
             if (androidTts == null) {
                 androidTts = android.speech.tts.TextToSpeech(this@LiveVoiceAgent) { status ->
                     if (status == android.speech.tts.TextToSpeech.SUCCESS) {
-                        setLanguage(java.util.Locale("bn", "BD"))
                         ttsInitLatch.complete(Unit)
                     } else {
                         ttsInitLatch.completeExceptionally(Exception("TTS init failed"))
