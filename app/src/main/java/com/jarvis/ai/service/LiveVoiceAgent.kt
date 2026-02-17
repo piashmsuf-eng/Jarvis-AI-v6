@@ -239,6 +239,8 @@ class LiveVoiceAgent : Service() {
                     }
                     Log.i(TAG, "Greeting: $greeting")
                     emitLog("MAYA", greeting)
+                    // STOP all other audio before speaking
+                    stopAllAudio()
                     safeSpeak(greeting)
 
 // CONTINUOUS LOOP
@@ -275,8 +277,10 @@ class LiveVoiceAgent : Service() {
                         updateNotification("Listening... Bolun Boss!")
 
                         // 1. LISTEN
+                        updateNotification("Listening... Bolun Boss!")
                         val userSpeech = safeListenForSpeech()
-                        if (userSpeech.isBlank()) {
+                        if (userSpeech.isBlank() || userSpeech.length < 2) {
+                            Log.d(TAG, "No speech detected or too short")
                             continue
                         }
                         lastUserSpeechTime = System.currentTimeMillis()
@@ -396,7 +400,21 @@ class LiveVoiceAgent : Service() {
     }
 
     private fun buildMessages(): List<ChatMessage> {
-        val messages = mutableListOf<ChatMessage>()
+        val messages = mutableListOf<ChatMessage__()
+
+        // SPECIAL VOICE CONTROL PROMPT
+        val voiceControlPrompt = """
+            IMPORTANT VOICE BEHAVIOR RULES:
+            1. NEVER speak while the user is talking - wait until completely finished
+            2. Respond ONLY after the FULL response is generated
+            3. If user is still speaking, wait silently - do not interrupt
+            4. Speak everything at once - no pausing mid-sentence
+            5. No partial responses - complete thought then speak
+            
+            The user is YOUR BOSS - treat commands as urgent requests.
+        """.trimIndent()
+        
+        messages.add(ChatMessage(role = "system", content = voiceControlPrompt))
 
         // System prompt (Jarvis/Maya defaults + settings)
         val systemPrompt = PersonalityEngine(this, prefManager).getSystemPrompt(
@@ -1024,41 +1042,41 @@ class LiveVoiceAgent : Service() {
     private suspend fun safeSpeak(text: String) {
         if (text.isBlank()) return
 
+        Log.i(TAG, "Speaking: ${text.take(30)}...")
+        
         try {
             withTimeout(30_000L) {
                 var cartesiaSuccess = false
-                val speakComplete = kotlinx.coroutines.CompletableDeferred<Unit>()
 
-                // Try Cartesia WebSocket first
-                val wsManager = cartesiaWsManager
-                if (wsManager != null) {
+                // Try Cartesia HTTP FIRST (more reliable for full response)
+                val httpClient = cartesiaClient
+                if (httpClient != null && prefManager.cartesiaApiKey.isNotBlank()) {
                     try {
-                        wsManager.speak(text, onComplete = { speakComplete.complete(Unit) })
-                        speakComplete.await()
-                        cartesiaSuccess = true
-                        Log.i(TAG, "Spoke via Cartesia WebSocket")
+                        val audioResult = httpClient.synthesize(text, "bn")
+                        if (audioResult.isSuccess) {
+                            audioResult.getOrNull()?.let { audioBytes ->
+                                playAudioBytes(audioBytes)
+                                cartesiaSuccess = true
+                                Log.i(TAG, "Spoke via Cartesia HTTP")
+                            }
+                        }
                     } catch (e: Exception) {
-                        Log.w(TAG, "Cartesia WS failed", e)
-                        speakComplete.complete(Unit)
+                        Log.w(TAG, "Cartesia HTTP failed", e)
                     }
                 }
 
-                // Try Cartesia HTTP if WS failed
+                // Try Cartesia WebSocket if HTTP failed
                 if (!cartesiaSuccess) {
-                    val httpClient = cartesiaClient
-                    if (httpClient != null) {
+                    val wsManager = cartesiaWsManager
+                    if (wsManager != null) {
                         try {
-                            val audioResult = httpClient.synthesize(text, "bn")
-                            if (audioResult.isSuccess) {
-                                // Play the audio bytes directly
-                                audioResult.getOrNull()?.let { audioBytes ->
-                                    playAudioBytes(audioBytes)
-                                    cartesiaSuccess = true
-                                    Log.i(TAG, "Spoke via Cartesia HTTP")
-                                }
-                            }
+                            val speakComplete = kotlinx.coroutines.CompletableDeferred<Unit>()
+                            wsManager.speak(text, onComplete = { speakComplete.complete(Unit) })
+                            speakComplete.await()
+                            cartesiaSuccess = true
+                            Log.i(TAG, "Spoke via Cartesia WebSocket")
                         } catch (e: Exception) {
-                            Log.w(TAG, "Cartesia HTTP failed", e)
+                            Log.w(TAG, "Cartesia WS failed", e)
                         }
                     }
                 }
@@ -1071,7 +1089,7 @@ class LiveVoiceAgent : Service() {
             }
         } catch (e: TimeoutCancellationException) {
             Log.w(TAG, "TTS timeout")
-            cartesiaWsManager?.cancelCurrentGeneration()
+            stopAllAudio()
         } catch (e: Exception) {
             Log.e(TAG, "TTS error", e)
         }
@@ -1080,7 +1098,7 @@ class LiveVoiceAgent : Service() {
     private fun playAudioBytes(bytes: ByteArray) {
         try {
             // Cleanup previous player
-            audioPlayer?.release()
+            stopAllAudio()
             
             val tempFile = java.io.File.createTempFile("cartesia_audio", ".mp3", cacheDir)
             tempFile.writeBytes(bytes)
@@ -1097,8 +1115,8 @@ class LiveVoiceAgent : Service() {
                         release()
                         true
                     }
-                    prepareAsync()
-                    setOnPreparedListener { start() }
+                    prepare()
+                    start()
                 } catch (e: Exception) {
                     Log.e(TAG, "MediaPlayer setup failed", e)
                     release()
@@ -1106,6 +1124,18 @@ class LiveVoiceAgent : Service() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Audio playback failed", e)
+        }
+    }
+
+    private fun stopAllAudio() {
+        try {
+            audioPlayer?.release()
+            audioPlayer = null
+            androidTts?.stop()
+            cartesiaWsManager?.cancelCurrentGeneration()
+            Log.d(TAG, "All audio stopped")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping audio", e)
         }
     }
 
