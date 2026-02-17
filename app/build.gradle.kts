@@ -119,7 +119,7 @@ dependencies {
     // Provides offline, on-device "Hey Jarvis" wake word detection.
     // Built-in JARVIS keyword — no custom model file needed.
     // Free tier: https://console.picovoice.ai/
-    // implementation("ai.picovoice:porcupine-android:3.0.3") // DISABLED to reduce APK size
+    implementation("ai.picovoice:porcupine-android:3.0.3")
 
     // ── Jetpack Compose (from Maya AI) ──────────────────────────
     implementation(platform("androidx.compose:compose-bom:2024.02.00"))
@@ -147,14 +147,14 @@ dependencies {
     implementation("com.github.topjohnwu.libsu:io:5.2.2")
 
     // ── Lottie Animations (from Maya AI) ────────────────────────
-    // implementation("com.airbnb.android:lottie-compose:6.3.0") // DISABLED to reduce APK size
+    implementation("com.airbnb.android:lottie-compose:6.3.0")
 
     // ── Coil for Image Loading (from Maya AI) ──────────────────
-    // implementation("io.coil-kt:coil-compose:2.5.0") // DISABLED to reduce APK size
+    implementation("io.coil-kt:coil-compose:2.5.0")
 
     // ── Accompanist (from Maya AI) ──────────────────────────────
-    // implementation("com.google.accompanist:accompanist-systemuicontroller:0.34.0") // DISABLED
-    // implementation("com.google.accompanist:accompanist-permissions:0.34.0") // DISABLED
+    implementation("com.google.accompanist:accompanist-systemuicontroller:0.34.0")
+    implementation("com.google.accompanist:accompanist-permissions:0.34.0")
 
     // ── ML Kit for OCR/Vision ───────────────────────────────────
     implementation("com.google.mlkit:text-recognition:16.0.0")

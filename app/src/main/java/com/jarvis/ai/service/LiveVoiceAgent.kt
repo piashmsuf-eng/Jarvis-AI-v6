@@ -400,7 +400,7 @@ class LiveVoiceAgent : Service() {
     }
 
     private fun buildMessages(): List<ChatMessage> {
-        val messages = mutableListOf<ChatMessage__()
+        val messages = mutableListOf<ChatMessage>()
 
         // SPECIAL VOICE CONTROL PROMPT
         val voiceControlPrompt = """
