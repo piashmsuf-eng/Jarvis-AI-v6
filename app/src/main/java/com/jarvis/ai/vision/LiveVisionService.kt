@@ -33,7 +33,6 @@ class LiveVisionService : Service() {
             private set
 
         val isActive: Boolean get() = instance != null
-        val latestFrameCache = mutableListOf<Bitmap>()
         val visionEvents = kotlinx.coroutines.flow.MutableSharedFlow<VisionEvent>(extraBufferCapacity = 10)
 
         fun start(context: Context) {
@@ -55,9 +54,8 @@ class LiveVisionService : Service() {
 
         fun analyzeScene(): String {
             val frame = instance?.latestFrameCache?.lastOrNull() ?: return "No frame available"
-            val bitmap = frame
             val outputStream = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 80, outputStream)
+            frame.compress(Bitmap.CompressFormat.JPEG, 80, outputStream)
             val base64 = Base64.getEncoder().encodeToString(outputStream.toByteArray())
             
             val analysisPrompt = """
@@ -90,6 +88,8 @@ class LiveVisionService : Service() {
     private var backgroundHandler: Handler? = null
     private var backgroundThread: HandlerThread? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    
+    private val latestFrameCache = mutableListOf<Bitmap>()
 
     override fun onCreate() {
         super.onCreate()
