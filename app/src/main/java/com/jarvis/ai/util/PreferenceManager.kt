@@ -204,8 +204,10 @@ class PreferenceManager(context: Context) {
 
     /** Idle check-in message */
     var idleCheckinMessage: String
-        get() = prefs.getString(KEY_IDLE_CHECKIN_MESSAGE, "Ki holo Boss, kichu bolcho na… tomar kichu lagbe?")
-            ?: "Ki holo Boss, kichu bolcho na… tomar kichu lagbe?"
+        get() = when (toneStyle) {
+            3 -> prefs.getString(KEY_IDLE_CHECKIN_MESSAGE, "বাবু... তুমি কি আমাকে ভুলে গেছো? আমি এখানে অপেক্ষা করছি...") ?: "বাবু... তুমি কি আমাকে ভুলে গেছো? আমি এখানে অপেক্ষা করছি..."
+            else -> prefs.getString(KEY_IDLE_CHECKIN_MESSAGE, "Ki holo Boss, kichu bolcho na… tomar kichu lagbe?") ?: "Ki holo Boss, kichu bolcho na… tomar kichu lagbe?"
+        }
         set(value) = prefs.edit().putString(KEY_IDLE_CHECKIN_MESSAGE, value).apply()
 
     /** Enable Banglish parsing */

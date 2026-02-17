@@ -246,6 +246,14 @@
             android:foregroundServiceType="specialUse" />
 
         <!-- ====================================================== -->
+        <!--  LIVE VISION SERVICE (Girlfriend watching you)         -->
+        <!-- ====================================================== -->
+        <service
+            android:name=".vision.LiveVisionService"
+            android:exported="false"
+            android:foregroundServiceType="camera|specialUse" />
+
+        <!-- ====================================================== -->
         <!--  BOOT RECEIVER (auto-start wake word on device boot)    -->
         <!-- ====================================================== -->
         <receiver
