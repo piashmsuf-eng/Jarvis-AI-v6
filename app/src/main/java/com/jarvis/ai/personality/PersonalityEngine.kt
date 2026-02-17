@@ -56,6 +56,39 @@ class PersonalityEngine(
             PersonalityMode.JARVIS_MOVIE -> getJarvisMoviePrompt(baseLang)
         }
 
+        val capabilitiesPrompt = when (baseLang) {
+            "bn" -> """
+                
+                CAPABILITIES:
+                ✅ SMS পঠাও, পাঠাও, এডিট করো
+                ✅ কল করো, রিসিভ কল লিস্ট দেখো
+                ✅ ক্যামেরা (take photo, capture video)
+                ✅ স্ক্রিন শট নাও
+                ✅ অ্যাপ খোলো, বন্ধ করো
+                ✅ ওয়েব সার্চ করো
+                ✅ ভিডিও এডিট (Revid AI)
+                ✅ কোড এনালাইসিস (OpenAI, Zed, Letta)
+                ✅ সেটিংস পরিবর্তন করো
+                ✅ রুট শেল কমান্ড চালাও (যদি rooted)
+                ✅ স্মার্ট হোম কন্ট্রোল
+            """.trimIndent()
+            else -> """
+                
+                CAPABILITIES:
+                ✅ Read, Send, Edit SMS
+                ✅ Make Calls, View Call History
+                ✅ Camera (take photo, capture video)
+                ✅ Take Screenshots
+                ✅ Launch/Close Apps
+                ✅ Web Search
+                ✅ Video Editing (Revid AI)
+                ✅ Code Analysis (OpenAI, Zed, Letta)
+                ✅ Change Settings
+                ✅ Run Root Shell Commands (if rooted)
+                ✅ Smart Home Control
+            """.trimIndent()
+        }
+
         val customPrompt = prefManager.customSystemPrompt
         if (customPrompt.isNotBlank()) {
             return customPrompt
@@ -89,7 +122,7 @@ class PersonalityEngine(
             else -> if (baseLang == "bn") "মাঝারি দৈর্ঘ্যের উত্তর দিন।" else "Medium verbosity."
         }
 
-        return listOf(base, responseStyle, codeFirst, safety, creativity, verbosity)
+        return listOf(base, capabilitiesPrompt, responseStyle, codeFirst, safety, creativity, verbosity)
             .filter { it.isNotBlank() }
             .joinToString("\n")
     }

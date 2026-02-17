@@ -163,24 +163,29 @@ class LiveVoiceAgent : Service() {
         val defaultVoiceId = prefManager.cartesiaVoiceId.ifBlank { "d8909a06-7a08-4400-831a-0a6042cabd4a" }
         
         if (cartesiaKey.isNotBlank()) {
-            // Initialize Cartesia HTTP client
+            // Initialize Cartesia HTTP client ONLY (WebSocket has issues)
             cartesiaClient = CartesiaTtsClient(
                 apiKey = cartesiaKey,
-                voiceId = defaultVoiceId
+                voiceId = defaultVoiceId,
+                modelId = "sonic-3",
+                sampleRate = 24000
             )
-            
-            // Initialize Cartesia WebSocket with heartbeat
-            if (prefManager.useCartesiaWebSocket) {
-                cartesiaWsManager = CartesiaWebSocketManager(
-                    apiKey = cartesiaKey,
-                    voiceId = defaultVoiceId
-                ).apply {
-                    connect()
-                }
-            }
-            Log.i(TAG, "Cartesia TTS initialized with Pooja voice (Bengali Girl): $defaultVoiceId")
+            Log.i(TAG, "Cartesia TTS initialized with Pooja voice: $defaultVoiceId")
+            Log.i(TAG, "API Key: ${cartesiaKey.take(8)}...")
         } else {
-            Log.w(TAG, "No Cartesia API key - will use Android TTS fallback")
+            Log.e(TAG, "NO CARTESIA API KEY - Will use Android TTS only!")
+            showToast("Add Cartesia API Key in Settings!")
+        }
+
+        // Initialize Android TTS for backup
+        androidTts = android.speech.tts.TextToSpeech(this) { status ->
+            if (status == android.speech.tts.TextToSpeech.SUCCESS) {
+                setLanguage(java.util.Locale("bn", "BD"))
+                ttsInitLatch.complete(Unit)
+                Log.i(TAG, "Android TTS ready")
+            } else {
+                ttsInitLatch.completeExceptionally(Exception("TTS init failed"))
+            }
         }
 
         // Start Live Vision Service for girlfriend-like proactive behavior
@@ -548,6 +553,8 @@ class LiveVoiceAgent : Service() {
     private suspend fun executeAction(action: Map<String, String>) {
         val type = action["action"] ?: return
         Log.d(TAG, "Executing action: $type")
+        
+        showToast("Executing: $type...")
 
         try {
             when (type) {
@@ -709,9 +716,100 @@ class LiveVoiceAgent : Service() {
                         val cm = getSystemService(Context.CAMERA_SERVICE) as? android.hardware.camera2.CameraManager
                         val camId = cm?.cameraIdList?.firstOrNull() ?: "0"
                         cm?.setTorchMode(camId, enable)
+                        emitLog("MAYA", if (enable) "Flashlight ON 💡" else "Flashlight OFF")
                     } catch (e: Exception) {
                         Log.e(TAG, "Flashlight failed", e)
                     }
+                }
+
+                "take_photo" -> {
+                    try {
+                        val frame = LiveVisionService.captureFrame()
+                        if (frame != null) {
+                            val photoFile = java.io.File(cacheDir, "photo_${System.currentTimeMillis()}.jpg")
+                            java.io.FileOutputStream(photoFile).use {
+                                frame.compress(Bitmap.CompressFormat.JPEG, 90, it)
+                            }
+                            emitLog("MAYA", "Photo saved: ${photoFile.absolutePath}")
+                            safeSpeak("বাবু, ছবি তুললাম... কোথায় সেভ করবো?")
+                        } else {
+                            emitLog("MAYA", "Camera OFF - can't take photo")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Photo failed", e)
+                    }
+                }
+
+                "read_sms" -> {
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            val cursor = contentResolver.query(
+                                android.provider.Telephony.Sms.CONTENT_URI,
+                                arrayOf("address", "body", "date"),
+                                null, null, "date DESC"
+                            )
+                            val messages = mutableListOf<String>()
+                            cursor?.use {
+                                var i = 0
+                                while (it.moveToNext() && i < 10) {
+                                    val phone = it.getString(0)
+                                    val body = it.getString(1)
+                                    messages.add("$phone: $body")
+                                    i++
+                                }
+                            }
+                            emitLog("SMS", messages.joinToString("\n"))
+                            safeSpeak("বাবু, শেষ ১০টা মেসেজ পড়েছি... পড়ে শুনি")
+                        } catch (e: Exception) {
+                            emitLog("MAYA", "SMS fail: ${e.message}")
+                            safeSpeak("বাবু, SMS পড়তে পারলাম না...")
+                        }
+                    }
+                }
+
+                "send_sms" -> {
+                    val phone = action["phone"] ?: return
+                    val text = action["text"] ?: return
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            val smsManager = if (android.os.Build.VERSION.SDK_INT >= 31) {
+                                getSystemService(android.telephony.SmsManager::class.java)
+                            } else {
+                                @Suppress("DEPRECATION") android.telephony.SmsManager.getDefault()
+                            }
+                            smsManager.sendTextMessage(phone, null, text, null, null)
+                            emitLog("MAYA", "SMS sent to $phone")
+                            safeSpeak("বাবু, SMS পাঠিয়ে দিয়েছি...")
+                        } catch (e: Exception) {
+                            emitLog("MAYA", "SMS failed: ${e.message}")
+                        }
+                    }
+                }
+
+                "edit_sms" -> {
+                    val smsId = action["sms_id"]?.toLongOrNull() ?: return
+                    val newText = action["new_text"] ?: return
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            contentResolver.update(
+                                android.provider.Telephony.Sms.CONTENT_URI,
+                                android.content.ContentValues().apply {
+                                    put("body", newText)
+                                },
+                                "_id = ?",
+                                arrayOf(smsId.toString())
+                            )
+                            emitLog("MAYA", "SMS #$smsId updated")
+                            safeSpeak("বাবু, SMS এডিট করলাম...")
+                        } catch (e: Exception) {
+                            emitLog("MAYA", "SMS edit failed: ${e.message}")
+                        }
+                    }
+                }
+
+                "create_video" -> {
+                    val script = action["script"] ?: action["text"] ?: return
+                    createRevidVideo(script)
                 }
 
                 "analyze_screen" -> {
@@ -806,6 +904,56 @@ class LiveVoiceAgent : Service() {
                     }
                     emitLog("MAYA ❤", goodmorning)
                     scope.launch { safeSpeak(goodmorning) }
+                }
+
+                "analyze_code" -> {
+                    val code = action["code"] ?: return
+                    val language = action["language"] ?: "auto"
+                    val analysisPrompt = """
+                        Analyze this code ($language):
+                        
+                        $code
+                        
+                        Provide:
+                        1. What does it do?
+                        2. Any bugs?
+                        3. Improvements?
+                        4. Security concerns?
+                    """.trimIndent()
+                    
+                    try {
+                        val analysis = withContext(Dispatchers.IO) { askLlm(analysisPrompt) }
+                        emitLog("CODE", analysis)
+                        safeSpeak("বাবু, কোড এনালাইসিস করেছি...")
+                    } catch (e: Exception) {
+                        emitLog("CODE", "Failed: ${e.message}")
+                    }
+                }
+
+                "improve_code" -> {
+                    val code = action["code"] ?: return
+                    val prompt = "Optimize and improve this code:\n$code"
+                    
+                    try {
+                        val improved = withContext(Dispatchers.IO) { askLlm(prompt) }
+                        emitLog("IMPROVED", improved)
+                        safeSpeak("বাবু, কোড উন্নত করেছি...")
+                    } catch (e: Exception) {
+                        emitLog("IMPROVED", "Failed: ${e.message}")
+                    }
+                }
+
+                "explain_code" -> {
+                    val code = action["code"] ?: return
+                    val prompt = "Explain this code in simple terms:\n$code"
+                    
+                    try {
+                        val explanation = withContext(Dispatchers.IO) { askLlm(prompt) }
+                        emitLog("EXPLANATION", explanation)
+                        safeSpeak("বাবু, কোড বুঝিয়ে বলতেছি...")
+                    } catch (e: Exception) {
+                        emitLog("EXPLANATION", "Failed: ${e.message}")
+                    }
                 }
 
                 else -> Log.d(TAG, "Unknown action: $type")
@@ -1036,7 +1184,7 @@ class LiveVoiceAgent : Service() {
     // TTS - TEXT TO SPEECH
     // ================================================================
 
-    /**
+/**
      * Speaks text and WAITS until done
      */
     private suspend fun safeSpeak(text: String) {
@@ -1045,20 +1193,67 @@ class LiveVoiceAgent : Service() {
         Log.i(TAG, "Speaking: ${text.take(30)}...")
         
         try {
-            withTimeout(30_000L) {
+            withTimeout(45_000L) {
                 var cartesiaSuccess = false
 
-                // Try Cartesia HTTP FIRST (more reliable for full response)
+                // Try Cartesia HTTP FIRST (most reliable)
                 val httpClient = cartesiaClient
                 if (httpClient != null && prefManager.cartesiaApiKey.isNotBlank()) {
                     try {
+                        Log.i(TAG, "Attempting Cartesia HTTP synthesis...")
                         val audioResult = httpClient.synthesize(text, "bn")
                         if (audioResult.isSuccess) {
                             audioResult.getOrNull()?.let { audioBytes ->
+                                Log.i(TAG, "Got ${audioBytes.size} bytes from Cartesia")
                                 playAudioBytes(audioBytes)
                                 cartesiaSuccess = true
-                                Log.i(TAG, "Spoke via Cartesia HTTP")
-                            }
+                                Log.i(TAG, "Successfully Spoke via Cartesia HTTP")
+                            } ?: Log.w(TAG, "Cartesia returned null audio")
+                        } else {
+                            Log.w(TAG, "Cartesia failed: ${audioResult.exceptionOrNull()?.message}")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Cartesia HTTP exception", e)
+                    }
+                } else {
+                    Log.e(TAG, "Cartesia client null or no API key. Key has key: ${prefManager.cartesiaApiKey.isNotBlank()}")
+                }
+
+                // Try Cartesia WebSocket if HTTP failed
+                if (!cartesiaSuccess) {
+                    val wsManager = cartesiaWsManager
+                    if (wsManager != null) {
+                        try {
+                            Log.i(TAG, "Trying Cartesia WebSocket...")
+                            val speakComplete = kotlinx.coroutines.CompletableDeferred<Unit>()
+                            wsManager.speak(text, onComplete = { speakComplete.complete(Unit) })
+                            speakComplete.await()
+                            cartesiaSuccess = true
+                            Log.i(TAG, "Spoke via Cartesia WebSocket")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Cartesia WS failed", e)
+                        }
+                    }
+                }
+
+                // If Cartesia failed, use Android TTS
+                if (!cartesiaSuccess) {
+                    Log.w(TAG, "Cartesia FAILED - using Android TTS immediately")
+                    val tts = android.speech.tts.TextToSpeech(this@LiveVoiceAgent) { status ->
+                        if (status == android.speech.tts.TextToSpeech.SUCCESS) {
+                            setLanguage(java.util.Locale("bn", "BD"))
+                            speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "main")
+                        }
+                    }
+                }
+            }
+        } catch (e: TimeoutCancellationException) {
+            Log.e(TAG, "TTS timeout after 45s")
+            stopAllAudio()
+        } catch (e: Exception) {
+            Log.e(TAG, "TTS error", e)
+        }
+    }
                         }
                     } catch (e: Exception) {
                         Log.w(TAG, "Cartesia HTTP failed", e)
@@ -1097,6 +1292,8 @@ class LiveVoiceAgent : Service() {
 
     private fun playAudioBytes(bytes: ByteArray) {
         try {
+            Log.i(TAG, "Playing ${bytes.size} bytes audio...")
+            
             // Cleanup previous player
             stopAllAudio()
             
@@ -1106,17 +1303,28 @@ class LiveVoiceAgent : Service() {
             audioPlayer = android.media.MediaPlayer().apply {
                 try {
                     setDataSource(tempFile.absolutePath)
+                    setAudioStreamType(android.media.AudioManager.STREAM_MUSIC)
+                    setVolume(1.0f, 1.0f)
+                    
                     setOnCompletionListener {
+                        Log.i(TAG, "Audio playback complete")
                         tempFile.delete()
                         release()
                     }
+                    
                     setOnErrorListener { _, what, extra ->
                         Log.e(TAG, "MediaPlayer error: $what, extra: $extra")
+                        tempFile.delete()
                         release()
                         true
                     }
-                    prepare()
-                    start()
+                    
+                    setOnPreparedListener {
+                        Log.i(TAG, "Audio prepared, starting playback")
+                        start()
+                    }
+                    
+                    prepareAsync()
                 } catch (e: Exception) {
                     Log.e(TAG, "MediaPlayer setup failed", e)
                     release()
