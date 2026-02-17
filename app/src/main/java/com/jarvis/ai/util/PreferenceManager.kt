@@ -96,10 +96,6 @@ class PreferenceManager(context: Context) {
         get() = prefs.getString(KEY_CUSTOM_BASE_URL, "") ?: ""
         set(value) = prefs.edit().putString(KEY_CUSTOM_BASE_URL, value).apply()
 
-    var cartesiaVoiceId: String
-        get() = prefs.getString(KEY_CARTESIA_VOICE_ID, "") ?: ""
-        set(value) = prefs.edit().putString(KEY_CARTESIA_VOICE_ID, value).apply()
-
     // ------------------------------------------------------------------ //
     //  Wake Word (Picovoice Porcupine)                                    //
     // ------------------------------------------------------------------ //

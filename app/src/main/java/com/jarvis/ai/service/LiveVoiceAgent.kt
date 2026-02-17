@@ -1134,19 +1134,6 @@ class LiveVoiceAgent : Service() {
         }
     }
 
-    private fun speakAndroidFallback(text: String) {
-        try {
-            val tts = android.speech.tts.TextToSpeech(this@LiveVoiceAgent) { status ->
-                if (status == android.speech.tts.TextToSpeech.SUCCESS) {
-                    tts.language = java.util.Locale("bn", "BD")
-                    tts.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "fallback")
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Android TTS fallback failed", e)
-        }
-    }
-
     /**
      * Speaks text WITHOUT waiting (fire-and-forget)
      */
