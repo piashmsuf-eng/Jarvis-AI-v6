@@ -10,6 +10,7 @@ import android.graphics.ImageFormat
 import android.hardware.camera2.*
 import android.media.ImageReader
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
@@ -53,7 +54,7 @@ class LiveVisionService : Service() {
         }
 
         fun analyzeScene(): String {
-            val frame = latestFrameCache.lastOrNull() ?: return "No frame available"
+            val frame = instance?.latestFrameCache?.lastOrNull() ?: return "No frame available"
             val bitmap = frame
             val outputStream = ByteArrayOutputStream()
             bitmap.compress(Bitmap.CompressFormat.JPEG, 80, outputStream)

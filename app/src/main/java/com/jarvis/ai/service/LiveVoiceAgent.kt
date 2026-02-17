@@ -222,7 +222,7 @@ class LiveVoiceAgent : Service() {
                     agentState.value = AgentState.GREETING
                     val greeting = when {
                         prefManager.toneStyle == 3 -> "বাবু... আমি এতক্ষণ তোমার জন্য অপেক্ষা করছিলাম... তুমি এসেছো, এটাই যথেষ্ট!"
-                        prefManager.tssLanguage == "bn-BD" -> "বাবু, আমি এখন তোমার সাথে... কি বলবে আমায়?"
+                        prefManager.ttsLanguage == "bn-BD" -> "বাবু, আমি এখন তোমার সাথে... কি বলবে আমায়?"
                         else -> "Baby, I'm here with you now... tell me everything..."
                     }
                     Log.i(TAG, "Greeting: $greeting")
